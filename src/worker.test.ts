@@ -1,0 +1,101 @@
+// Runs the hook as Orca would, with this worker as the only plugin in the chain.
+import { assert, mockHost, mountWorker, test } from 'orca/testing'
+import { execFileSync } from 'node:child_process'
+import { parseProjectList } from './projects'
+import { TEMPLATES_KEY, type Templates } from './protocol'
+import { applyIssueTemplate, readTemplates } from './rewrite'
+import * as main from './worker'
+
+const URL = 'https://github.com/acme/web/issues/14'
+const launch = (command: string) => ({
+  agent: 'claude',
+  workspaceId: 'repo::/tmp/issue-14',
+  workspaceKind: 'worktree' as const,
+  terminalId: 'term_1',
+  command,
+  env: {}
+})
+const withTemplates = (templates?: Templates) => ({
+  host: mockHost({
+    capabilities: ['storage:own'],
+    storage: templates ? { [TEMPLATES_KEY]: templates } : {}
+  }),
+  hooks: ['agent.launch.before']
+})
+const TEMPLATES: Templates = {
+  default: 'Default #{{issue_number}}',
+  projects: [
+    { repo: 'acme/web', name: 'Web', template: 'Plan #{{issue_number}} in {{repo}}:\n{{issue_url}}' },
+    { repo: 'acme/docs', name: 'Docs', template: '  ' }
+  ]
+}
+
+test('shell metacharacters in templates stay literal draft text', () => {
+  const draft = "Don't run $(printf injected); `printf injected` \"quoted\"\nnext line"
+  const command = applyIssueTemplate(`printf '%s' --prefill '${URL}'`, { default: draft, projects: [] })!
+  assert.equal(execFileSync('/bin/sh', ['-c', command], { encoding: 'utf8' }), `--prefill${draft}`)
+})
+
+test('a project template turns an issue pick into its rendered draft, without logging', async () => {
+  const worker = await mountWorker(main, withTemplates(TEMPLATES))
+  const event = launch(`claude --dangerously-skip-permissions --prefill '${URL}'`)
+  assert.deepEqual(await worker.hooks.fire('agent.launch.before', event), {
+    kind: 'continue',
+    event: {
+      ...event,
+      command: `claude --dangerously-skip-permissions --prefill 'Plan #14 in acme/web:\n${URL}'`
+    }
+  })
+  assert.deepEqual(worker.logs, [])
+  await worker.deactivate()
+})
+
+test('nothing stored yet uses the built-in default', async () => {
+  const worker = await mountWorker(main, withTemplates())
+  const event = launch(`claude --prefill '${URL}'`)
+  assert.deepEqual(await worker.hooks.fire('agent.launch.before', event), {
+    kind: 'continue',
+    event: { ...event, command: `claude --prefill 'Complete ${URL}'` }
+  })
+  await worker.deactivate()
+})
+
+test('leaves every other launch unchanged', async () => {
+  const worker = await mountWorker(main, withTemplates(TEMPLATES))
+  for (const command of [
+    'claude --dangerously-skip-permissions',
+    `claude --prefill 'my own note ${URL}'`,
+    `claude --prefill '${URL.replace('issues', 'pull')}'`,
+    `claude '${URL}'`
+  ]) {
+    const event = launch(command)
+    assert.deepEqual(await worker.hooks.fire('agent.launch.before', event), { kind: 'continue', event })
+  }
+  await worker.deactivate()
+})
+
+test('a blank project template falls back to the default, matching the repo in any case', () => {
+  const draft = (url: string) => applyIssueTemplate(`claude --prefill '${url}'`, TEMPLATES)
+  assert.equal(draft('https://github.com/acme/Docs/issues/3'), `claude --prefill 'Default #3'`)
+  assert.equal(draft('https://github.com/ACME/Web/issues/1')?.startsWith(`claude --prefill 'Plan #1`), true)
+})
+
+test('blank default and no project template keeps the launch unchanged', () => {
+  assert.equal(applyIssueTemplate(`claude --prefill '${URL}'`, { default: ' ', projects: [] }), null)
+})
+
+test('storage of another shape reads as the defaults', () => {
+  assert.equal(readTemplates({ default: 3 }).default, 'Complete {{issue_url}}')
+})
+
+test('reads GitHub-backed projects from orca project list output', () => {
+  const json = JSON.stringify({
+    result: {
+      projects: [
+        { displayName: 'Web', providerIdentity: { owner: 'acme', repo: 'web' } },
+        { displayName: 'Notes', kind: 'folder' }
+      ]
+    }
+  })
+  assert.deepEqual(parseProjectList(json), [{ id: 'github:acme/web', repo: 'acme/web', name: 'Web' }])
+})

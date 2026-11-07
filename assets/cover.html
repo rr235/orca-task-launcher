@@ -1,0 +1,67 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Task Launcher</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Geist:wght@300;400;500&family=Geist+Mono:wght@400&display=swap" rel="stylesheet">
+<style>
+  :root {
+    --bg: #ffffff;
+    --ink: #17181b;
+    --muted: #63656b;
+    --rule: #e6e6e3;
+    --accent: #1f47c8;
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  html, body { width: 1600px; height: 1000px; overflow: hidden; }
+  body {
+    background: var(--bg);
+    color: var(--ink);
+    font-family: 'Geist', system-ui, sans-serif;
+    font-weight: 400;
+    display: grid;
+    grid-template-columns: 640px 1fr;
+    align-items: center;
+    padding: 0 90px 0 110px;
+    gap: 40px;
+  }
+  .copy { display: flex; flex-direction: column; gap: 30px; }
+  .logo { width: 120px; height: auto; }
+  h1 { font-size: 76px; font-weight: 400; letter-spacing: -0.035em; line-height: 1; }
+  .lede { font-size: 27px; line-height: 1.4; color: var(--muted); font-weight: 300; }
+  ol { list-style: none; display: flex; flex-direction: column; border-top: 1px solid var(--rule); counter-reset: step; }
+  li { font-size: 20px; line-height: 1.4; display: flex; gap: 14px; align-items: baseline; padding-top: 16px; counter-increment: step; }
+  li::before { content: '0' counter(step); font-family: 'Geist Mono', monospace; font-size: 16px; color: var(--accent); min-width: 26px; }
+  .shots { position: relative; height: 1000px; }
+  .shot {
+    position: absolute;
+    width: 360px;
+    height: auto;
+    border-radius: 16px;
+    overflow: hidden;
+    box-shadow: 0 40px 90px -30px rgba(20, 24, 40, 0.45), 0 0 0 1px rgba(0, 0, 0, 0.08);
+  }
+  .shot img { width: 360px; display: block; }
+  .dark { left: 0; top: 115px; }
+  .light { left: 400px; top: 271px; }
+</style>
+</head>
+<body>
+  <section class="copy">
+    <img class="logo" src="icon.png" alt="">
+    <h1>Task Launcher</h1>
+    <p class="lede">Run the GitHub issues from projects using custom prompts.</p>
+    <ol>
+      <li>Use prompt template to set custom prompt specific to the project</li>
+      <li>Run tasks directly from the side panel with the default agent</li>
+      <li>Branches and work trees are automatically created</li>
+      <li>Native UI adapts to the themes</li>
+    </ol>
+  </section>
+  <div class="shots">
+    <div class="shot dark"><img src="panel-dark.png" alt=""></div>
+    <div class="shot light"><img src="panel-light.png" alt=""></div>
+  </div>
+</body>
+</html>

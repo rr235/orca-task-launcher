@@ -1,0 +1,47 @@
+{
+  "manifestVersion": 2,
+  "id": "task-launcher",
+  "name": "Task Launcher",
+  "version": "0.1.0",
+  "description": "Run the GitHub issues from your projects using custom prompts. Start any open issue in its own branch and worktree with your default agent, right from a side panel that shows your board fields, filters and running agents.",
+  "author": {
+    "name": "rr235",
+    "url": "https://github.com/rr235"
+  },
+  "license": "MIT",
+  "icon": "assets/icon.png",
+  "cover": {
+    "path": "assets/cover.png",
+    "alt": "Task Launcher: the Orca side panel in a dark and a light theme, with a prompt template and open GitHub issues"
+  },
+  "engines": {
+    "orca": ">=1.4.248"
+  },
+  "execution": "trusted-worker",
+  "pluginApi": 1,
+  "main": "src/worker.ts",
+  "capabilities": [
+    {
+      "kind": "storage:own"
+    },
+    {
+      "kind": "workspace:read"
+    }
+  ],
+  "contributes": {
+    "hooks": [
+      {
+        "event": "agent.launch.before"
+      }
+    ],
+    "panels": [
+      {
+        "id": "issues",
+        "title": "Task Launcher",
+        "icon": "rocket",
+        "entry": "src/panel.tsx",
+        "ui": "components"
+      }
+    ]
+  }
+}
