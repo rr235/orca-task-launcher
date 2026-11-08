@@ -5,7 +5,6 @@ import {
   boardLoadMessage,
   createArgs,
   BOARDS_QUERY,
-  defaultAgent,
   ISSUES_QUERY,
   NO_BOARDS,
   parseBoards,
@@ -83,13 +82,6 @@ test('each live worktree linked to an issue of the project becomes its session',
   assert.deepEqual(sessionsFor('github:acme/web', list, ps(null)), {
     42: { worktreeId: ID_42, name: 'issue-42-add-dark-mode', agent: 'codex' }
   })
-})
-
-test('the default agent follows Orca settings, blank means no agent, unset means Claude', () => {
-  assert.equal(defaultAgent(JSON.stringify({ settings: { defaultTuiAgent: 'codex' } })), 'codex')
-  assert.equal(defaultAgent(JSON.stringify({ settings: { defaultTuiAgent: 'blank' } })), null)
-  assert.equal(defaultAgent(JSON.stringify({ settings: { defaultTuiAgent: null } })), 'claude')
-  assert.equal(defaultAgent('not json'), 'claude')
 })
 
 test('Start creates a top-level worktree linked to the issue, sending the prompt to the agent', () => {

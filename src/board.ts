@@ -250,25 +250,6 @@ export function parseRepoIssues(json: string, boards: BoardFields = NO_BOARDS): 
   return { issues, states: boards.states, fields: boards.fields, viewer: data.viewer?.login ?? null }
 }
 
-const FALLBACK_AGENT = 'claude'
-
-/**
- * The agent a new workspace starts with, from Orca's stored `settings.defaultTuiAgent`: null when it
- * is `blank` (no agent), and Claude when the setting is unset or unreadable.
- */
-export function defaultAgent(orcaDataJson: string | null): string | null {
-  let value: unknown
-  try {
-    value = orcaDataJson ? (JSON.parse(orcaDataJson) as { settings?: { defaultTuiAgent?: unknown } }).settings?.defaultTuiAgent : null
-  } catch {
-    value = null
-  }
-  if (value === 'blank') {
-    return null
-  }
-  return typeof value === 'string' && value ? value : FALLBACK_AGENT
-}
-
 const AGENT_LABELS: Record<string, string> = { claude: 'Claude', codex: 'Codex', opencode: 'OpenCode', gemini: 'Gemini' }
 
 export const agentLabel = (agent: string): string =>
