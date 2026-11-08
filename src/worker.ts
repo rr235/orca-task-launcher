@@ -71,14 +71,15 @@ export default function activate(orca: OrcaWorkerApi): void {
         log(`board.load: no board fields: ${error.message}`)
         return NO_BOARDS
       })
-    let issuesJson: string
+    let loaded: ReturnType<typeof parseRepoIssues>
     try {
-      issuesJson = await graphql(ISSUES_QUERY)
+      const issuesJson = await graphql(ISSUES_QUERY)
+      loaded = parseRepoIssues(issuesJson, await boards)
     } catch (error) {
       log(`board.load: gh failed: ${(error as Error).message}`)
       return { kind: 'error', message: boardLoadMessage(error as Error, 'gh') }
     }
-    const { issues, states, fields, viewer } = parseRepoIssues(issuesJson, await boards)
+    const { issues, states, fields, viewer } = loaded
     return { kind: 'ready', project, issues, sessions: sessionsFor(project.id, listJson, psJson), states, fields, viewer }
   }
 

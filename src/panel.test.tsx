@@ -139,6 +139,56 @@ test('without boards, every issue shows, with no Status filter, even one saved e
   await view.unmount()
 })
 
+test('a fresh repo-only load replaces cached board filters, and restored fields reuse the saved Status', async () => {
+  const saved = { status: '=Ready', assignee: '*any', label: '*any', author: '*any', milestone: '*any', type: '*any' }
+  let current: Board = { ...READY, issues: READY.issues.map((issue) => ({ ...issue, fields: {} })), fields: [], states: [] }
+  const h = mockHost({
+    capabilities: CAPABILITIES,
+    requests: { 'project.active': () => PROJECT, 'board.load': () => current }
+  })
+  const view = await mount(panel, {
+    host: h,
+    persisted: { plugin: { boards: stored({ [PROJECT.id]: READY }, 2), filters: stored(saved, 2) } }
+  })
+  assert.ok(view.find({ label: 'Start #159' }))
+  assert.ok(view.find({ label: 'Start #62' }))
+  assert.ok(view.find({ label: 'Filter' }))
+  assert.equal(view.find({ text: 'M' }), null)
+  current = READY
+  await view.emit('workspace.changed', { context: null })
+  assert.ok(view.find({ label: 'Start #159' }))
+  assert.equal(view.find({ label: 'Start #62' }), null)
+  assert.ok(view.find({ label: 'Filter (1)' }))
+  await view.unmount()
+})
+
+test('a structured refresh error preserves the selected project cache', async () => {
+  const message = 'GitHub could not load the issues: unavailable'
+  const h = mockHost({
+    capabilities: CAPABILITIES,
+    requests: { 'project.active': () => PROJECT, 'board.load': () => ({ kind: 'error', message }) }
+  })
+  const view = await mount(panel, {
+    host: h,
+    persisted: { plugin: { boards: stored({ [PROJECT.id]: READY }, 2) } }
+  })
+  assert.ok(view.find({ label: 'Start #159' }))
+  assert.ok(view.find({ text: message }))
+  await view.unmount()
+})
+
+test('Start still works after loading without project boards', async () => {
+  const repoOnly: Board = { ...READY, issues: READY.issues.map((issue) => ({ ...issue, fields: {} })), fields: [], states: [] }
+  const { host: h, calls } = host(repoOnly, { ...repoOnly, sessions: STARTED.sessions })
+  const view = await mount(panel, { host: h })
+  await view.press({ label: 'Start #159' })
+  assert.deepEqual(calls, [{ projectId: PROJECT.id, repo: PROJECT.repo, issue: repoOnly.issues[0] }])
+  assert.ok(view.find({ text: 'issue-159-show-the-saved-theme' }))
+  assert.equal(view.find({ label: 'Start #159' }), null)
+  assert.deepEqual(view.errors, [])
+  await view.unmount()
+})
+
 test('Start sends the issue to the worker and shows its worktree and agent', async () => {
   const { host: h, calls } = host(READY)
   const view = await mount(panel, { host: h })
