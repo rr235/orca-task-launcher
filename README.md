@@ -68,7 +68,7 @@ Task Launcher runs code on your machine, so Orca asks you to approve it. It:
 
 - reads issues and board fields with `gh`, signed in as you
 - creates and opens worktrees with the Orca CLI (`orca-ide` on Linux)
-- reads your default agent from Orca’s settings on macOS; elsewhere, Start uses Claude
+- reads your default agent from Orca’s settings
 - fills in your template when an agent starts from the Tasks view (not on Windows)
 
 It shows up to 100 open issues per project.

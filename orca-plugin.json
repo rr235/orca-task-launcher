@@ -2,7 +2,7 @@
   "manifestVersion": 2,
   "id": "task-launcher",
   "name": "Task Launcher",
-  "version": "0.1.1",
+  "version": "0.1.2",
   "description": "Run the GitHub issues from your projects using custom prompts. Start any open issue in its own branch and worktree with your default agent, right from a side panel that shows your board fields, filters and running agents.",
   "author": {
     "name": "rr235",
