@@ -1,6 +1,8 @@
 <!--
 Documentation-only change: keep only Summary, starting "Updates the README:" with a few bullets
 on what it now covers when useful. Delete Changes and Verification.
+
+Leave the version in orca-plugin.json alone. Releases bump it: see .github/RELEASING.md.
 -->
 
 ## Summary
