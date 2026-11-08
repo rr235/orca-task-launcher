@@ -21,10 +21,11 @@ Requires **Orca 1.4.248+** and **GitHub CLI (`gh`)** signed in with access to yo
 
 Install Task Launcher from the Orca community catalog:
 
-[Open in Orca](https://onorca.dev/plugins/rr235.task-launcher?catalog=community)
+- [Open in Orca](https://onorca.dev/plugins/rr235.task-launcher?catalog=community)
+- [Plugin page](https://onorca.dev/plugins/rr235/orca-task-launcher)
 
-Orca opens the plugin’s page in Settings → Plugins, and asks to add the community catalog if you
-haven’t yet. Review the requested access, then press **Install**. Orca keeps it updated.
+Orca asks to add the community catalog if you haven’t yet. Review the requested access, then
+press **Install**. Orca keeps it updated.
 
 Once installed:
 
