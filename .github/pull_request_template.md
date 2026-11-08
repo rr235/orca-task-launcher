@@ -15,8 +15,9 @@ on what it now covers when useful. Delete Changes and Verification.
 
 ## Verification
 
-- `orca plugin test .`:
-- `check` and `validate`:
+- ✅ `orca plugin test .`:
+- ✅ `check` and `validate`:
+<!-- ✅ for each check that passed, ⚠️ for anything not run or only partly verified. -->
 - Plugin capabilities: <!-- "No new plugin capabilities", or name each one added -->
 <!-- Add "- Dependency additions: <name each>" only when this PR adds one. -->
 
