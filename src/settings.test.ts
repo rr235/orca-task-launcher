@@ -1,17 +1,25 @@
 // Reads Orca's default agent from real settings files laid out as Orca writes them.
-import { assert, test } from 'orca/testing'
-import { mkdirSync, mkdtempSync, writeFileSync } from 'node:fs'
+import { afterEach, assert, test } from 'orca/testing'
+import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { DatabaseSync } from 'node:sqlite'
 import { activeProfileId, agentSetting, orcaDataDir, readDefaultAgent } from './settings'
 
 const quiet = () => {}
+const homes: string[] = []
+afterEach(() => {
+  for (const dir of homes.splice(0)) rmSync(dir, { recursive: true, force: true })
+})
+
+const dataDir = (dir: string) => join(dir, 'Library', 'Application Support', 'orca')
+const databaseFile = (dir: string) => join(dataDir(dir), 'profiles', 'local-default', 'profile-state.db')
 
 /** A macOS-style home with Orca's data folder, an active profile and the given settings files. */
 function home(files: { profile?: string; index?: boolean; settings?: object | null; legacy?: object }): string {
   const dir = mkdtempSync(join(tmpdir(), 'task-launcher-'))
-  const data = join(dir, 'Library', 'Application Support', 'orca')
+  homes.push(dir)
+  const data = dataDir(dir)
   const profile = files.profile ?? 'local-default'
   const profileDir = join(data, 'profiles', profile)
   mkdirSync(profileDir, { recursive: true })
@@ -69,4 +77,74 @@ test('without settings in the database, the older settings file is used, then Cl
   assert.equal(await agentFor(home({ settings: null, legacy: { settings: { defaultTuiAgent: 'gemini' } } })), 'gemini')
   assert.equal(await agentFor(home({ legacy: { settings: { defaultTuiAgent: 'codex' } } })), 'codex')
   assert.equal(await agentFor(home({ index: false })), 'claude')
+})
+
+test('a damaged primary profile index recovers the active profile from its backup', async () => {
+  const dir = home({ profile: 'work', settings: { defaultTuiAgent: 'codex' } })
+  const index = join(dataDir(dir), 'orca-profile-index.json')
+  writeFileSync(`${index}.bak`, JSON.stringify({ activeProfileId: 'work', profiles: [{ id: 'work' }] }))
+  for (const invalid of ['{', 'null', '{}', JSON.stringify({ activeProfileId: '../work', profiles: [] })]) {
+    writeFileSync(index, invalid)
+    assert.equal(await agentFor(dir), 'codex')
+  }
+  rmSync(index)
+  assert.equal(await agentFor(dir), 'codex')
+})
+
+test('a valid primary index takes precedence over its backup', async () => {
+  const dir = home({ settings: { defaultTuiAgent: 'blank' } })
+  writeFileSync(join(dataDir(dir), 'orca-profile-index.json.bak'), JSON.stringify({ activeProfileId: 'work', profiles: [{ id: 'work' }] }))
+  assert.equal(await agentFor(dir), null)
+})
+
+test('installed plugins locate their host data even when worker environment paths are stripped', () => {
+  const hash = 'a'.repeat(64)
+  assert.equal(orcaDataDir('linux', {}, '/home/a', `/custom/orca/plugins/rr235.task-launcher/${hash}/src/settings.ts`), '/custom/orca')
+  assert.equal(orcaDataDir('win32', {}, 'C:\\Users\\a', `D:\\Orca\\plugins\\rr235.task-launcher\\${hash}\\src\\settings.ts`), 'D:\\Orca')
+  assert.equal(orcaDataDir('darwin', {}, '/Users/a', `/custom/orca/plugins/local.task-launcher/${'b'.repeat(32)}/src/settings.ts`), '/custom/orca')
+  assert.equal(orcaDataDir('linux', {}, '/home/a', '/code/plugins/task-launcher/src/settings.ts'), '/home/a/.config/orca')
+})
+
+test('the database stays authoritative when its agent setting is unset', async () => {
+  assert.equal(await agentFor(home({ settings: {}, legacy: { settings: { defaultTuiAgent: 'codex' } } })), 'claude')
+})
+
+test('reads committed WAL settings while the host keeps a write transaction open', async () => {
+  const dir = home({ settings: { defaultTuiAgent: 'codex' } })
+  const writer = new DatabaseSync(databaseFile(dir))
+  try {
+    writer.exec('PRAGMA journal_mode = WAL; PRAGMA wal_autocheckpoint = 0')
+    const update = writer.prepare("UPDATE profile_state_documents SET payload = ? WHERE domain = 'settings'")
+    update.run(JSON.stringify({ defaultTuiAgent: 'opencode' }))
+    writer.exec('BEGIN IMMEDIATE')
+    update.run(JSON.stringify({ defaultTuiAgent: 'gemini' }))
+    assert.equal(await agentFor(dir), 'opencode')
+    writer.exec('COMMIT')
+    assert.equal(await agentFor(dir), 'gemini')
+  } finally {
+    writer.close()
+  }
+})
+
+test('missing databases are not created and corrupt settings fall back without rejecting', async () => {
+  const dir = home({ legacy: { settings: { defaultTuiAgent: 'blank' } } })
+  assert.equal(await agentFor(dir), null)
+  assert.equal(existsSync(databaseFile(dir)), false)
+  writeFileSync(databaseFile(dir), 'not sqlite')
+  assert.equal(await agentFor(dir), null)
+  writeFileSync(join(dataDir(dir), 'profiles', 'local-default', 'orca-data.json'), '{')
+  assert.equal(await agentFor(dir), 'claude')
+})
+
+test('malformed database payload falls back to the legacy setting', async () => {
+  const dir = home({ settings: {}, legacy: { settings: { defaultTuiAgent: 'gemini' } } })
+  const db = new DatabaseSync(databaseFile(dir))
+  try {
+    for (const payload of ['{', 'null']) {
+      db.prepare('UPDATE profile_state_documents SET payload = ?').run(payload)
+      assert.equal(await agentFor(dir), 'gemini')
+    }
+  } finally {
+    db.close()
+  }
 })

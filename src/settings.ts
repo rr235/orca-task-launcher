@@ -5,6 +5,7 @@ import { readFile } from 'node:fs/promises'
 import { homedir } from 'node:os'
 import { posix, win32 } from 'node:path'
 import process from 'node:process'
+import { fileURLToPath } from 'node:url'
 
 const FALLBACK_AGENT = 'claude'
 const DEFAULT_PROFILE = 'local-default'
@@ -20,9 +21,19 @@ type SqliteModule = {
 
 const pathsFor = (platform: string) => (platform === 'win32' ? win32 : posix)
 
-/** Orca's data folder: Electron's user data folder for the app named `orca`. */
-export function orcaDataDir(platform: string, env: Env, home: string): string {
+/** Installed workers live under userData/plugins/<key>/<hash>/src; dev folders use platform defaults. */
+export function orcaDataDir(platform: string, env: Env, home: string, moduleFile?: string): string {
   const path = pathsFor(platform)
+  if (moduleFile && path.isAbsolute(moduleFile)) {
+    const versionDir = path.dirname(path.dirname(moduleFile))
+    const pluginDir = path.dirname(versionDir)
+    const pluginsDir = path.dirname(pluginDir)
+    // The host strips APPDATA and XDG_CONFIG_HOME from workers, so prefer the install location.
+    if (path.basename(pluginsDir) === 'plugins' && path.basename(pluginDir).endsWith('.task-launcher') &&
+        /^(?:[0-9a-f]{32}|[0-9a-f]{64})$/.test(path.basename(versionDir))) {
+      return path.dirname(pluginsDir)
+    }
+  }
   if (platform === 'darwin') {
     return path.join(home, 'Library', 'Application Support', 'orca')
   }
@@ -33,15 +44,17 @@ export function orcaDataDir(platform: string, env: Env, home: string): string {
 }
 
 /** The active profile from `orca-profile-index.json`, or Orca's default profile. */
-export function activeProfileId(indexJson: string | null): string {
-  try {
-    const index = JSON.parse(indexJson ?? '') as { activeProfileId?: unknown; profiles?: { id?: unknown }[] }
-    const id = index.activeProfileId
-    if (typeof id === 'string' && /^[A-Za-z0-9][A-Za-z0-9_-]{0,127}$/.test(id) && index.profiles?.some((p) => p?.id === id)) {
-      return id
+export function activeProfileId(indexJson: string | null, backupJson: string | null = null): string {
+  for (const json of [indexJson, backupJson]) {
+    try {
+      const index = JSON.parse(json ?? '') as { activeProfileId?: unknown; profiles?: { id?: unknown }[] }
+      const id = index.activeProfileId
+      if (typeof id === 'string' && /^[A-Za-z0-9][A-Za-z0-9_-]{0,127}$/.test(id) && index.profiles?.some((p) => p?.id === id)) {
+        return id
+      }
+    } catch {
+      // A torn primary can still have a valid recovery index.
     }
-  } catch {
-    // An unreadable index means the default profile.
   }
   return DEFAULT_PROFILE
 }
@@ -85,9 +98,9 @@ export async function readDefaultAgent(
   home: string = homedir()
 ): Promise<string | null> {
   const path = pathsFor(platform)
-  const dataDir = orcaDataDir(platform, env, home)
+  const dataDir = orcaDataDir(platform, env, home, fileURLToPath(import.meta.url))
   const index = path.join(dataDir, 'orca-profile-index.json')
-  const profileDir = path.join(dataDir, 'profiles', activeProfileId((await readText(index)) ?? (await readText(`${index}.bak`))))
+  const profileDir = path.join(dataDir, 'profiles', activeProfileId(await readText(index), await readText(`${index}.bak`)))
   try {
     const setting = await fromProfileState(path.join(profileDir, 'profile-state.db'))
     if (setting) {
