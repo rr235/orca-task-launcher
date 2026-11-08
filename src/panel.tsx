@@ -86,6 +86,10 @@ async function loadBoard(): Promise<void> {
     if (seq !== loadSeq) {
       return
     }
+    if (next.kind === 'error') {
+      set(boardError, next.message)
+      return
+    }
     set(board, next)
     set(boardError, null)
     if (next.kind === 'ready') {
@@ -97,7 +101,7 @@ async function loadBoard(): Promise<void> {
         // Without the selected project, the shown list may be another project's.
         set(board, null)
       }
-      set(boardError, 'Could not load the issues. Check that gh is signed in.')
+      set(boardError, 'Could not load the issues.')
     }
   }
 }
@@ -220,6 +224,13 @@ function toggleField(field: string, checked: boolean, boardFields: string[]): vo
   }))
 }
 
+// Status comes from the project boards, so without a board Status field there is nothing to filter.
+const hasStatus = (current: ReadyBoard): boolean => current.fields.includes('Status')
+
+/** The filters in use: a saved Status filter is ignored while the project has no board Status. */
+const activeFilters = (current: ReadyBoard): Filters =>
+  hasStatus(current) ? read(filters) : { ...read(filters), status: ANY }
+
 function matches(issue: Issue, f: Filters, viewer: string | null): boolean {
   const status = issue.fields.Status === undefined ? NONE : `=${issue.fields.Status}`
   const assigned =
@@ -337,17 +348,19 @@ function FilterControls({ current, applied }: { current: ReadyBoard; applied: nu
   const hasNoMilestone = issues.some((i) => !i.milestone)
   return (
     <Stack gap="sm">
-      <Select
-        label="Status"
-        value={f.status}
-        onChange={(v) => setFilter('status', v)}
-        options={options(
-          [{ value: ANY, label: 'All states' }, ...(hasNoStatus ? [{ value: NONE, label: 'No status' }] : [])],
-          issues.map((i) => i.fields.Status ?? null),
-          f.status,
-          current.states
-        )}
-      />
+      {hasStatus(current) ? (
+        <Select
+          label="Status"
+          value={f.status}
+          onChange={(v) => setFilter('status', v)}
+          options={options(
+            [{ value: ANY, label: 'All states' }, ...(hasNoStatus ? [{ value: NONE, label: 'No status' }] : [])],
+            issues.map((i) => i.fields.Status ?? null),
+            f.status,
+            current.states
+          )}
+        />
+      ) : null}
       <Select
         label="Assignee"
         value={f.assignee}
@@ -420,7 +433,7 @@ export default function Panel() {
   if (!current || !all) {
     return <Spinner label="Loading issues" />
   }
-  if (current.kind === 'no-project') {
+  if (current.kind !== 'ready') {
     return (
       <EmptyState
         title="No GitHub project"
@@ -430,7 +443,7 @@ export default function Panel() {
     )
   }
   const { project, issues } = current
-  const f = read(filters)
+  const f = activeFilters(current)
   const applied = (Object.keys(NO_FILTERS) as (keyof Filters)[]).filter((k) => f[k] !== ANY).length
   const visible = issues.filter((issue) => matches(issue, f, current.viewer))
   const shown = current.fields.filter((field) => read(display).fields.includes(field))

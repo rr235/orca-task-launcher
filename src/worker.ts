@@ -7,7 +7,18 @@ import { homedir } from 'node:os'
 import { join } from 'node:path'
 import process from 'node:process'
 import type { OrcaWorkerApi } from 'orca/worker'
-import { activeProjectId, createArgs, defaultAgent, ISSUES_QUERY, parseRepoIssues, sessionsFor } from './board'
+import {
+  activeProjectId,
+  BOARDS_QUERY,
+  boardLoadMessage,
+  createArgs,
+  defaultAgent,
+  ISSUES_QUERY,
+  NO_BOARDS,
+  parseBoards,
+  parseRepoIssues,
+  sessionsFor
+} from './board'
 import { run } from './cli'
 import { listProjects } from './projects'
 import { TEMPLATES_KEY, type Board, type Issue, type ProjectRef } from './protocol'
@@ -35,19 +46,39 @@ export default function activate(orca: OrcaWorkerApi): void {
   }
 
   async function loadBoard({ projectId }: { projectId: string }): Promise<Board> {
-    const [projects, psJson, listJson] = await Promise.all([
-      listProjects(log),
-      run('orca', ['worktree', 'ps', '--json']),
-      run('orca', ['worktree', 'list', '--json'])
-    ])
+    let projects: ProjectRef[], psJson: string, listJson: string
+    try {
+      ;[projects, psJson, listJson] = await Promise.all([
+        listProjects(log),
+        run('orca', ['worktree', 'ps', '--json']),
+        run('orca', ['worktree', 'list', '--json'])
+      ])
+    } catch (error) {
+      log(`board.load: orca failed: ${(error as Error).message}`)
+      return { kind: 'error', message: boardLoadMessage(error as Error, 'orca') }
+    }
     const project = projects.find((p) => p.id === projectId)
     if (!project) {
       return { kind: 'no-project' }
     }
     const [owner, name] = project.repo.split('/')
-    const { issues, states, fields, viewer } = parseRepoIssues(
-      await run('gh', ['api', 'graphql', '-f', `owner=${owner}`, '-f', `name=${name}`, '-f', `query=${ISSUES_QUERY}`])
-    )
+    const graphql = (query: string) =>
+      run('gh', ['api', 'graphql', '-f', `owner=${owner}`, '-f', `name=${name}`, '-f', `query=${query}`])
+    // Boards are optional: without the read:project scope or any boards, the issues show without them.
+    const boards = graphql(BOARDS_QUERY)
+      .then(parseBoards)
+      .catch((error: Error) => {
+        log(`board.load: no board fields: ${error.message}`)
+        return NO_BOARDS
+      })
+    let issuesJson: string
+    try {
+      issuesJson = await graphql(ISSUES_QUERY)
+    } catch (error) {
+      log(`board.load: gh failed: ${(error as Error).message}`)
+      return { kind: 'error', message: boardLoadMessage(error as Error, 'gh') }
+    }
+    const { issues, states, fields, viewer } = parseRepoIssues(issuesJson, await boards)
     return { kind: 'ready', project, issues, sessions: sessionsFor(project.id, listJson, psJson), states, fields, viewer }
   }
 

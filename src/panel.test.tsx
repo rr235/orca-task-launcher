@@ -110,10 +110,34 @@ test('a failed project lookup hides the previous project issues', async () => {
   offline = true
   await view.emit('workspace.changed', { context: null })
   assert.equal(view.find({ label: 'Start #159' }), null)
-  assert.ok(view.find({ text: 'Could not load the issues. Check that gh is signed in.' }))
+  assert.ok(view.find({ text: 'Could not load the issues.' }))
   await view.unmount()
 })
 
+
+test('a board error shows its own message', async () => {
+  const message = 'gh is not signed in. Run gh auth login in a terminal, then try again.'
+  const h = mockHost({
+    capabilities: CAPABILITIES,
+    requests: { 'project.active': () => PROJECT, 'board.load': () => ({ kind: 'error', message }) }
+  })
+  const view = await mount(panel, { host: h })
+  assert.ok(view.find({ text: message }))
+  await view.unmount()
+})
+
+test('without boards, every issue shows, with no Status filter, even one saved earlier', async () => {
+  const noFields = (issue: Issue): Issue => ({ ...issue, fields: {} })
+  const repoOnly: Board = { ...READY, issues: READY.issues.map(noFields), fields: [], states: [] }
+  const saved = { status: '=Ready', assignee: '*any', label: '*any', author: '*any', milestone: '*any', type: '*any' }
+  const view = await mount(panel, { host: host(repoOnly).host, persisted: { plugin: { filters: stored(saved, 2) } } })
+  assert.ok(view.find({ label: 'Start #159' }))
+  assert.ok(view.find({ label: 'Start #62' }))
+  await view.toggle({ label: 'Filter' })
+  assert.equal(view.find({ label: 'Status' }), null)
+  assert.ok(view.find({ label: 'Label' }))
+  await view.unmount()
+})
 
 test('Start sends the issue to the worker and shows its worktree and agent', async () => {
   const { host: h, calls } = host(READY)
@@ -218,7 +242,7 @@ test('reopening shows the selected project cached list at once, never another pr
     })
   const same = await mount(panel, { host: offline(PROJECT), persisted })
   assert.ok(same.find({ label: 'Start #159' }))
-  assert.ok(same.find({ text: 'Could not load the issues. Check that gh is signed in.' }))
+  assert.ok(same.find({ text: 'Could not load the issues.' }))
   await same.unmount()
   const other = { id: 'github:acme/docs', repo: 'acme/docs', name: 'Docs' }
   const switched = await mount(panel, { host: offline(other), persisted })
