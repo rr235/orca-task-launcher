@@ -42,11 +42,10 @@ export function sessionsFor(projectId: string, listJson: string, psJson: string)
   return sessions
 }
 
-/**
- * A repo's open issues with what the panel shows and filters by, each issue's values on its project
- * boards, the owner's boards' own fields and Status options, and the signed-in login, in one GitHub
- * GraphQL round trip.
- */
+// The issues come from the repo alone. Project boards are optional: BOARDS_QUERY needs the
+// `read:project` scope and boards to exist, and the issues show without board fields when it fails.
+
+/** A repo's open issues with what the panel shows and filters by, and the signed-in login. */
 export const ISSUES_QUERY = `query($owner: String!, $name: String!) {
   viewer { login }
   repository(owner: $owner, name: $name) {
@@ -60,6 +59,17 @@ export const ISSUES_QUERY = `query($owner: String!, $name: String!) {
         milestone { title }
         issueType { name }
         labels(first: 20) { nodes { name } }
+      }
+    }
+  }
+}`
+
+/** The same issues' values on the owner's project boards, and those boards' fields and Status options. */
+export const BOARDS_QUERY = `query($owner: String!, $name: String!) {
+  repository(owner: $owner, name: $name) {
+    issues(states: OPEN, first: 100, orderBy: {field: CREATED_AT, direction: DESC}) {
+      nodes {
+        number
         projectItems(first: 10) {
           nodes {
             project { id }
@@ -91,6 +101,21 @@ fragment Board on ProjectV2 {
   fields(first: 50) { nodes { ... on ProjectV2FieldCommon { name dataType } } }
   field(name: "Status") { ... on ProjectV2SingleSelectField { options { name } } }
 }`
+
+/** What the panel says when the board cannot load, from the error the CLI run gave. */
+export function boardLoadMessage(error: { message?: string; notFound?: boolean }, tool: 'orca' | 'gh'): string {
+  const message = error.message ?? ''
+  if (tool === 'orca') {
+    return 'Could not reach the Orca CLI. Check that Orca is running, then try again.'
+  }
+  if (error.notFound) {
+    return 'The GitHub CLI (gh) was not found. Install it, run gh auth login, then try again.'
+  }
+  if (/gh auth login|Bad credentials|HTTP 401/i.test(message)) {
+    return 'gh is not signed in. Run gh auth login in a terminal, then try again.'
+  }
+  return `GitHub could not load the issues: ${message.replace(/^gh:\s*/, '') || 'unknown error'}`
+}
 
 // Field types a board owner adds and fills in; the rest mirror the issue itself.
 const OWN_FIELD_TYPES = new Set(['SINGLE_SELECT', 'TEXT', 'NUMBER', 'DATE', 'ITERATION'])
@@ -159,23 +184,25 @@ function fieldsOf(issue: GqlIssue, own: Set<string>, boards: Set<string>): Recor
   return { ...fields }
 }
 
-/** The repo's open issues, the open boards' own fields and states, and the signed-in login. */
-export function parseRepoIssues(json: string): {
-  issues: Issue[]
-  states: string[]
-  fields: string[]
-  viewer: string | null
-} {
+function dataOf(json: string): NonNullable<GqlResponse['data']> & { repository: { issues: { nodes: (GqlIssue | null)[] } } } {
   const response = JSON.parse(json) as GqlResponse
   if (response.errors?.length) {
     throw new Error(response.errors.map((error) => error.message ?? 'GitHub query failed').join('; '))
   }
-  const data = response.data
-  if (!data?.repository?.issues?.nodes) {
+  if (!response.data?.repository?.issues?.nodes) {
     throw new Error('GitHub did not return the repository issues.')
   }
-  const repository = data?.repository
-  const boards = (repository?.owner?.projectsV2?.nodes ?? []).filter((b) => b && !b.closed)
+  return response.data as ReturnType<typeof dataOf>
+}
+
+/** What the project boards add: their own fields and Status options, and each issue's values. */
+export type BoardFields = { fields: string[]; states: string[]; values: Record<number, Record<string, string>> }
+export const NO_BOARDS: BoardFields = { fields: [], states: [], values: {} }
+
+/** The open boards' own fields and states, and each issue's values on them, from BOARDS_QUERY. */
+export function parseBoards(json: string): BoardFields {
+  const repository = dataOf(json).repository
+  const boards = (repository.owner?.projectsV2?.nodes ?? []).filter((b) => b && !b.closed)
   const fields = [
     ...new Set(
       boards.flatMap((b) =>
@@ -184,8 +211,25 @@ export function parseRepoIssues(json: string): {
     )
   ]
   const own = new Set(fields)
-  const boardIds = new Set(boards.flatMap((b) => b?.id ? [b.id] : []))
-  const issues = (repository?.issues?.nodes ?? []).flatMap((issue): Issue[] => {
+  const boardIds = new Set(boards.flatMap((b) => (b?.id ? [b.id] : [])))
+  const values: Record<number, Record<string, string>> = {}
+  for (const issue of repository.issues.nodes) {
+    if (issue?.number) {
+      values[issue.number] = fieldsOf(issue, own, boardIds)
+    }
+  }
+  return { fields, states: [...new Set(boards.flatMap((b) => names(b?.field?.options)))], values }
+}
+
+/** The repo's open issues with their board values, if any, and the signed-in login, from ISSUES_QUERY. */
+export function parseRepoIssues(json: string, boards: BoardFields = NO_BOARDS): {
+  issues: Issue[]
+  states: string[]
+  fields: string[]
+  viewer: string | null
+} {
+  const data = dataOf(json)
+  const issues = data.repository.issues.nodes.flatMap((issue): Issue[] => {
     if (!issue?.number || !issue.title || !issue.url) {
       return []
     }
@@ -199,16 +243,11 @@ export function parseRepoIssues(json: string): {
         author: issue.author?.login ?? null,
         milestone: issue.milestone?.title ?? null,
         type: issue.issueType?.name ?? null,
-        fields: fieldsOf(issue, own, boardIds)
+        fields: boards.values[issue.number] ?? {}
       }
     ]
   })
-  return {
-    issues,
-    states: [...new Set(boards.flatMap((b) => names(b?.field?.options)))],
-    fields,
-    viewer: data?.viewer?.login ?? null
-  }
+  return { issues, states: boards.states, fields: boards.fields, viewer: data.viewer?.login ?? null }
 }
 
 const FALLBACK_AGENT = 'claude'

@@ -27,6 +27,8 @@ export type Session = { worktreeId: string; name: string; agent: string | null }
 /** What the panel shows: the focused workspace's project, its open issues and their worktrees. */
 export type Board =
   | { kind: 'no-project' }
+  /** The board could not load; `message` says why and what to do. */
+  | { kind: 'error'; message: string }
   | {
       kind: 'ready'
       project: ProjectRef

@@ -11,7 +11,7 @@ template.
 - **Display fields** chooses what each issue card shows: its labels, and any of the fields on the
   owner's GitHub project boards, such as Status, Size or Priority. Field values follow the board's
   field order. Size is shown to start with.
-- **Filter** narrows the list by Status, assignee ("Assigned to me" or "No assignee" included),
+- **Filter** narrows the list by Status (with a project board), assignee ("Assigned to me" or "No assignee" included),
   label, author, milestone and issue type. Its title counts the filters in use, and **Clear all**
   resets them.
 - Each card links its number to the issue on GitHub. **Start** (the play button) creates a
@@ -40,8 +40,11 @@ draft is left as Orca made it, because the rewrite quotes for a POSIX shell.
 
 ## Limits
 
-- Reads issues and project board fields with `gh`, signed in as you, in one query that needs the
-  `project` scope as well as repository access (`gh auth refresh -s project`). Creates worktrees
+- Reads the repo's issues with `gh`, signed in as you. Project boards are optional: their fields
+  appear when the owner's open boards can be read (`gh auth refresh -s read:project` grants
+  the project read scope). The Status filter needs a board's Status field. If the board query
+  fails for any reason, issues still load without board fields and any saved Status filter is
+  ignored until those fields return. Creates worktrees
   with the `orca` CLI. Both are found on `PATH` or at their usual install locations; the Orca CLI
   is `ORCA_CLI_COMMAND` when set, and `orca-ide` on Linux, where `orca` is the screen reader.
 - The default agent is read from Orca's stored settings on macOS; if they cannot be read, Start

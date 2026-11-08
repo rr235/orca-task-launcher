@@ -110,10 +110,84 @@ test('a failed project lookup hides the previous project issues', async () => {
   offline = true
   await view.emit('workspace.changed', { context: null })
   assert.equal(view.find({ label: 'Start #159' }), null)
-  assert.ok(view.find({ text: 'Could not load the issues. Check that gh is signed in.' }))
+  assert.ok(view.find({ text: 'Could not load the issues.' }))
   await view.unmount()
 })
 
+
+test('a board error shows its own message', async () => {
+  const message = 'gh is not signed in. Run gh auth login in a terminal, then try again.'
+  const h = mockHost({
+    capabilities: CAPABILITIES,
+    requests: { 'project.active': () => PROJECT, 'board.load': () => ({ kind: 'error', message }) }
+  })
+  const view = await mount(panel, { host: h })
+  assert.ok(view.find({ text: message }))
+  await view.unmount()
+})
+
+test('without boards, every issue shows, with no Status filter, even one saved earlier', async () => {
+  const noFields = (issue: Issue): Issue => ({ ...issue, fields: {} })
+  const repoOnly: Board = { ...READY, issues: READY.issues.map(noFields), fields: [], states: [] }
+  const saved = { status: '=Ready', assignee: '*any', label: '*any', author: '*any', milestone: '*any', type: '*any' }
+  const view = await mount(panel, { host: host(repoOnly).host, persisted: { plugin: { filters: stored(saved, 2) } } })
+  assert.ok(view.find({ label: 'Start #159' }))
+  assert.ok(view.find({ label: 'Start #62' }))
+  await view.toggle({ label: 'Filter' })
+  assert.equal(view.find({ label: 'Status' }), null)
+  assert.ok(view.find({ label: 'Label' }))
+  await view.unmount()
+})
+
+test('a fresh repo-only load replaces cached board filters, and restored fields reuse the saved Status', async () => {
+  const saved = { status: '=Ready', assignee: '*any', label: '*any', author: '*any', milestone: '*any', type: '*any' }
+  let current: Board = { ...READY, issues: READY.issues.map((issue) => ({ ...issue, fields: {} })), fields: [], states: [] }
+  const h = mockHost({
+    capabilities: CAPABILITIES,
+    requests: { 'project.active': () => PROJECT, 'board.load': () => current }
+  })
+  const view = await mount(panel, {
+    host: h,
+    persisted: { plugin: { boards: stored({ [PROJECT.id]: READY }, 2), filters: stored(saved, 2) } }
+  })
+  assert.ok(view.find({ label: 'Start #159' }))
+  assert.ok(view.find({ label: 'Start #62' }))
+  assert.ok(view.find({ label: 'Filter' }))
+  assert.equal(view.find({ text: 'M' }), null)
+  current = READY
+  await view.emit('workspace.changed', { context: null })
+  assert.ok(view.find({ label: 'Start #159' }))
+  assert.equal(view.find({ label: 'Start #62' }), null)
+  assert.ok(view.find({ label: 'Filter (1)' }))
+  await view.unmount()
+})
+
+test('a structured refresh error preserves the selected project cache', async () => {
+  const message = 'GitHub could not load the issues: unavailable'
+  const h = mockHost({
+    capabilities: CAPABILITIES,
+    requests: { 'project.active': () => PROJECT, 'board.load': () => ({ kind: 'error', message }) }
+  })
+  const view = await mount(panel, {
+    host: h,
+    persisted: { plugin: { boards: stored({ [PROJECT.id]: READY }, 2) } }
+  })
+  assert.ok(view.find({ label: 'Start #159' }))
+  assert.ok(view.find({ text: message }))
+  await view.unmount()
+})
+
+test('Start still works after loading without project boards', async () => {
+  const repoOnly: Board = { ...READY, issues: READY.issues.map((issue) => ({ ...issue, fields: {} })), fields: [], states: [] }
+  const { host: h, calls } = host(repoOnly, { ...repoOnly, sessions: STARTED.sessions })
+  const view = await mount(panel, { host: h })
+  await view.press({ label: 'Start #159' })
+  assert.deepEqual(calls, [{ projectId: PROJECT.id, repo: PROJECT.repo, issue: repoOnly.issues[0] }])
+  assert.ok(view.find({ text: 'issue-159-show-the-saved-theme' }))
+  assert.equal(view.find({ label: 'Start #159' }), null)
+  assert.deepEqual(view.errors, [])
+  await view.unmount()
+})
 
 test('Start sends the issue to the worker and shows its worktree and agent', async () => {
   const { host: h, calls } = host(READY)
@@ -218,7 +292,7 @@ test('reopening shows the selected project cached list at once, never another pr
     })
   const same = await mount(panel, { host: offline(PROJECT), persisted })
   assert.ok(same.find({ label: 'Start #159' }))
-  assert.ok(same.find({ text: 'Could not load the issues. Check that gh is signed in.' }))
+  assert.ok(same.find({ text: 'Could not load the issues.' }))
   await same.unmount()
   const other = { id: 'github:acme/docs', repo: 'acme/docs', name: 'Docs' }
   const switched = await mount(panel, { host: offline(other), persisted })

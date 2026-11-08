@@ -1,6 +1,18 @@
 // The board's reads of real `orca` and `gh` output shapes, trimmed to the fields used.
 import { assert, test } from 'orca/testing'
-import { activeProjectId, createArgs, defaultAgent, parseRepoIssues, sessionsFor, worktreeName } from './board'
+import {
+  activeProjectId,
+  boardLoadMessage,
+  createArgs,
+  BOARDS_QUERY,
+  defaultAgent,
+  ISSUES_QUERY,
+  NO_BOARDS,
+  parseBoards,
+  parseRepoIssues,
+  sessionsFor,
+  worktreeName
+} from './board'
 
 const ID_42 = 'repo1::/work/issue-42-add-dark-mode'
 const list = JSON.stringify({
@@ -33,6 +45,33 @@ test('GraphQL failures and missing repositories do not become an empty issue lis
   assert.deepEqual(parseRepoIssues(JSON.stringify({ data: { repository: { issues: { nodes: [] } } } })), {
     issues: [], fields: [], states: [], viewer: null
   })
+})
+
+test('the issues query asks for nothing that needs the read:project scope; boards come separately', () => {
+  for (const part of ['projectsV2', 'projectItems', 'ProjectV2']) {
+    assert.equal(ISSUES_QUERY.includes(part), false)
+    assert.ok(BOARDS_QUERY.includes(part))
+  }
+})
+
+test('a board query refused for scope fails, so the issues show without board fields', () => {
+  const refused = {
+    errors: [{ type: 'INSUFFICIENT_SCOPES', message: "The 'projectsV2' field requires one of the following scopes: ['read:project']" }]
+  }
+  assert.throws(() => parseBoards(JSON.stringify(refused)))
+  const issues = JSON.stringify({ data: { repository: { issues: { nodes: [{ number: 5, title: 'Fix', url: 'u5' }] } } } })
+  assert.deepEqual(parseRepoIssues(issues, NO_BOARDS).issues[0]?.fields, {})
+})
+
+test('a failed load says what to fix', () => {
+  assert.match(boardLoadMessage({ message: 'spawn gh ENOENT', notFound: true }, 'gh'), /not found/)
+  assert.match(boardLoadMessage({ message: 'gh: Bad credentials (HTTP 401)' }, 'gh'), /gh auth login/)
+  assert.match(boardLoadMessage({ message: 'To get started with GitHub CLI, please run:  gh auth login' }, 'gh'), /not signed in/)
+  assert.equal(
+    boardLoadMessage({ message: "gh: Could not resolve to a Repository with the name 'acme/web'." }, 'gh'),
+    "GitHub could not load the issues: Could not resolve to a Repository with the name 'acme/web'."
+  )
+  assert.match(boardLoadMessage({ message: 'connect ECONNREFUSED' }, 'orca'), /Orca CLI/)
 })
 
 test('the active project is the project of the worktree selected in the sidebar', () => {
@@ -130,7 +169,7 @@ test('reads issues with their people, milestone, type and own board fields, and 
       }
     }
   })
-  assert.deepEqual(parseRepoIssues(json), {
+  assert.deepEqual(parseRepoIssues(json, parseBoards(json)), {
     issues: [
       {
         number: 42,
