@@ -1,6 +1,6 @@
-// Pure reads of the `orca` and `gh` CLI output the board is built from, and the worktree create
+// Pure reads of the `orca` and `gh` CLI output the issue list is built from, and the worktree create
 // command a Start runs. The worker does the I/O; everything here is testable without it.
-import type { Issue, Session } from './protocol'
+import type { BoardFields, Issue, Session } from './protocol'
 
 type WorktreeRow = {
   id?: string
@@ -42,8 +42,8 @@ export function sessionsFor(projectId: string, listJson: string, psJson: string)
   return sessions
 }
 
-// The issues come from the repo alone. Project boards are optional: BOARDS_QUERY needs the
-// `read:project` scope and boards to exist, and the issues show without board fields when it fails.
+// The issues come from the repo alone. Project boards are optional and load separately: BOARDS_QUERY
+// needs the `read:project` scope and boards to exist, and the issues never wait on it.
 
 /** A repo's open issues with what the panel shows and filters by, and the signed-in login. */
 export const ISSUES_QUERY = `query($owner: String!, $name: String!) {
@@ -102,8 +102,8 @@ fragment Board on ProjectV2 {
   field(name: "Status") { ... on ProjectV2SingleSelectField { options { name } } }
 }`
 
-/** What the panel says when the board cannot load, from the error the CLI run gave. */
-export function boardLoadMessage(error: { message?: string; notFound?: boolean }, tool: 'orca' | 'gh'): string {
+/** What the panel says when the issues cannot load, from the error the CLI run gave. */
+export function loadErrorMessage(error: { message?: string; notFound?: boolean }, tool: 'orca' | 'gh'): string {
   const message = error.message ?? ''
   if (tool === 'orca') {
     return 'Could not reach the Orca CLI. Check that Orca is running, then try again.'
@@ -195,8 +195,6 @@ function dataOf(json: string): NonNullable<GqlResponse['data']> & { repository: 
   return response.data as ReturnType<typeof dataOf>
 }
 
-/** What the project boards add: their own fields and Status options, and each issue's values. */
-export type BoardFields = { fields: string[]; states: string[]; values: Record<number, Record<string, string>> }
 export const NO_BOARDS: BoardFields = { fields: [], states: [], values: {} }
 
 /** The open boards' own fields and states, and each issue's values on them, from BOARDS_QUERY. */
@@ -221,13 +219,8 @@ export function parseBoards(json: string): BoardFields {
   return { fields, states: [...new Set(boards.flatMap((b) => names(b?.field?.options)))], values }
 }
 
-/** The repo's open issues with their board values, if any, and the signed-in login, from ISSUES_QUERY. */
-export function parseRepoIssues(json: string, boards: BoardFields = NO_BOARDS): {
-  issues: Issue[]
-  states: string[]
-  fields: string[]
-  viewer: string | null
-} {
+/** The repo's open issues and the signed-in login, from ISSUES_QUERY. */
+export function parseRepoIssues(json: string): { issues: Issue[]; viewer: string | null } {
   const data = dataOf(json)
   const issues = data.repository.issues.nodes.flatMap((issue): Issue[] => {
     if (!issue?.number || !issue.title || !issue.url) {
@@ -242,12 +235,11 @@ export function parseRepoIssues(json: string, boards: BoardFields = NO_BOARDS): 
         assignees: (issue.assignees?.nodes ?? []).flatMap((a) => (a?.login ? [a.login] : [])),
         author: issue.author?.login ?? null,
         milestone: issue.milestone?.title ?? null,
-        type: issue.issueType?.name ?? null,
-        fields: boards.values[issue.number] ?? {}
+        type: issue.issueType?.name ?? null
       }
     ]
   })
-  return { issues, states: boards.states, fields: boards.fields, viewer: data.viewer?.login ?? null }
+  return { issues, viewer: data.viewer?.login ?? null }
 }
 
 const AGENT_LABELS: Record<string, string> = { claude: 'Claude', codex: 'Codex', opencode: 'OpenCode', gemini: 'Gemini' }

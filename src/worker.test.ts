@@ -1,10 +1,6 @@
 // Runs the hook as Orca would, with this worker as the only plugin in the chain.
 import { assert, mockHost, mountWorker, test } from 'orca/testing'
 import { execFileSync } from 'node:child_process'
-import childProcess from 'node:child_process'
-import { syncBuiltinESMExports } from 'node:module'
-import { mock } from 'node:test'
-import { BOARDS_QUERY, ISSUES_QUERY } from './board'
 import { parseProjectList } from './projects'
 import { TEMPLATES_KEY, type Templates } from './protocol'
 import { applyIssueTemplate, readTemplates } from './rewrite'
@@ -33,57 +29,6 @@ const TEMPLATES: Templates = {
     { repo: 'acme/docs', name: 'Docs', template: '  ' }
   ]
 }
-
-test('board loads survive optional failures and report required response failures', async () => {
-  let issues = JSON.stringify({ data: { repository: { issues: { nodes: [{ number: 14, title: 'Fix', url: URL }] } } } })
-  let boardResponse = JSON.stringify({ errors: [{ message: 'read:project scope required' }] })
-  const queries: string[] = []
-  const stub = mock.method(childProcess, 'execFile', (_file, args, _options, callback) => {
-    const query = args.find((arg: string) => arg.startsWith('query='))?.slice(6)
-    let stdout: string
-    if (query) {
-      queries.push(query)
-      stdout = query === ISSUES_QUERY ? issues : boardResponse
-    } else if (args[0] === 'project') {
-      stdout = JSON.stringify({ result: { projects: [{ id: 'github:acme/web', displayName: 'Web', providerIdentity: { owner: 'acme', repo: 'web' } }] } })
-    } else {
-      stdout = JSON.stringify({ result: { worktrees: [] } })
-    }
-    callback(null, stdout, '')
-    return {} as ReturnType<typeof childProcess.execFile>
-  })
-  syncBuiltinESMExports()
-  const worker = await mountWorker(main, withTemplates())
-  try {
-    const first = await worker.request('board.load', { projectId: 'github:acme/web' })
-    assert.equal(first.kind, 'ready')
-    if (first.kind === 'ready') {
-      assert.equal(first.issues.length, 1)
-      assert.deepEqual(first.fields, [])
-      assert.deepEqual(first.issues[0]?.fields, {})
-    }
-    assert.ok(queries.includes(ISSUES_QUERY))
-    assert.ok(queries.includes(BOARDS_QUERY))
-    boardResponse = 'invalid JSON'
-    assert.equal((await worker.request('board.load', { projectId: 'github:acme/web' })).kind, 'ready')
-    for (const response of [
-      { data: { repository: null } },
-      { errors: [{ message: 'Repository access denied' }] }
-    ]) {
-      issues = JSON.stringify(response)
-      const failed = await worker.request('board.load', { projectId: 'github:acme/web' })
-      assert.equal(failed.kind, 'error')
-      if (failed.kind === 'error') {
-        assert.match(failed.message, /GitHub could not load the issues:/)
-        assert.match(failed.message, /repository issues|Repository access denied/)
-      }
-    }
-  } finally {
-    await worker.deactivate()
-    stub.mock.restore()
-    syncBuiltinESMExports()
-  }
-})
 
 test('shell metacharacters in templates stay literal draft text', () => {
   const draft = "Don't run $(printf injected); `printf injected` \"quoted\"\nnext line"

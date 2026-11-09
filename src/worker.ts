@@ -7,17 +7,16 @@ import type { OrcaWorkerApi } from 'orca/worker'
 import {
   activeProjectId,
   BOARDS_QUERY,
-  boardLoadMessage,
+  loadErrorMessage,
   createArgs,
   ISSUES_QUERY,
-  NO_BOARDS,
   parseBoards,
   parseRepoIssues,
   sessionsFor
-} from './board'
+} from './issues'
 import { run } from './cli'
 import { listProjects } from './projects'
-import { TEMPLATES_KEY, type Board, type Issue, type ProjectRef } from './protocol'
+import { TEMPLATES_KEY, type BoardFields, type Issue, type IssueList, type ProjectRef } from './protocol'
 import { applyIssueTemplate, parseIssueLaunch, pickTemplate, readTemplates, renderTemplate } from './rewrite'
 import { readDefaultAgent } from './settings'
 
@@ -40,42 +39,57 @@ export default function activate(orca: OrcaWorkerApi): void {
     return { project, psJson, listJson }
   }
 
-  async function loadBoard({ projectId }: { projectId: string }): Promise<Board> {
-    let projects: ProjectRef[], psJson: string, listJson: string
+  const graphql = (repo: string, query: string) => {
+    const [owner, name] = repo.split('/')
+    return run('gh', ['api', 'graphql', '-f', `owner=${owner}`, '-f', `name=${name}`, '-f', `query=${query}`])
+  }
+  const orcaFailed = (error: unknown): IssueList => {
+    log(`issues.load: orca failed: ${(error as Error).message}`)
+    return { kind: 'error', message: loadErrorMessage(error as Error, 'orca') }
+  }
+
+  /** The repo's issues and their worktrees. Board fields never hold this up: see loadBoardFields. */
+  async function loadIssues({ projectId }: { projectId: string }): Promise<IssueList> {
+    const worktrees = Promise.all([run('orca', ['worktree', 'ps', '--json']), run('orca', ['worktree', 'list', '--json'])])
+    // Awaited below; this keeps an early return from leaving the rejection unhandled.
+    worktrees.catch(() => undefined)
+    let project: ProjectRef | undefined
     try {
-      ;[projects, psJson, listJson] = await Promise.all([
-        listProjects(log),
-        run('orca', ['worktree', 'ps', '--json']),
-        run('orca', ['worktree', 'list', '--json'])
-      ])
+      project = (await listProjects(log)).find((p) => p.id === projectId)
     } catch (error) {
-      log(`board.load: orca failed: ${(error as Error).message}`)
-      return { kind: 'error', message: boardLoadMessage(error as Error, 'orca') }
+      return orcaFailed(error)
     }
-    const project = projects.find((p) => p.id === projectId)
     if (!project) {
       return { kind: 'no-project' }
     }
-    const [owner, name] = project.repo.split('/')
-    const graphql = (query: string) =>
-      run('gh', ['api', 'graphql', '-f', `owner=${owner}`, '-f', `name=${name}`, '-f', `query=${query}`])
-    // Boards are optional: without the read:project scope or any boards, the issues show without them.
-    const boards = graphql(BOARDS_QUERY)
-      .then(parseBoards)
-      .catch((error: Error) => {
-        log(`board.load: no board fields: ${error.message}`)
-        return NO_BOARDS
-      })
+    // The issues query needs only the repo, so it runs while the worktree reads finish.
+    const issuesJson = graphql(project.repo, ISSUES_QUERY)
+    issuesJson.catch(() => undefined)
+    let psJson: string, listJson: string
+    try {
+      ;[psJson, listJson] = await worktrees
+    } catch (error) {
+      return orcaFailed(error)
+    }
     let loaded: ReturnType<typeof parseRepoIssues>
     try {
-      const issuesJson = await graphql(ISSUES_QUERY)
-      loaded = parseRepoIssues(issuesJson, await boards)
+      loaded = parseRepoIssues(await issuesJson)
     } catch (error) {
-      log(`board.load: gh failed: ${(error as Error).message}`)
-      return { kind: 'error', message: boardLoadMessage(error as Error, 'gh') }
+      log(`issues.load: gh failed: ${(error as Error).message}`)
+      return { kind: 'error', message: loadErrorMessage(error as Error, 'gh') }
     }
-    const { issues, states, fields, viewer } = loaded
-    return { kind: 'ready', project, issues, sessions: sessionsFor(project.id, listJson, psJson), states, fields, viewer }
+    return { kind: 'ready', project, issues: loaded.issues, sessions: sessionsFor(project.id, listJson, psJson), viewer: loaded.viewer }
+  }
+
+  /** The repo's project board fields. Boards are optional: without the read:project scope or any
+   *  boards this rejects, and the panel keeps the list as it is. */
+  async function loadBoardFields({ repo }: { repo: string }): Promise<BoardFields> {
+    try {
+      return parseBoards(await graphql(repo, BOARDS_QUERY))
+    } catch (error) {
+      log(`boardFields.load: no board fields: ${(error as Error).message}`)
+      throw new Error('Could not load the board fields.')
+    }
   }
 
   const starts = new Map<string, Promise<null>>()
@@ -111,7 +125,8 @@ export default function activate(orca: OrcaWorkerApi): void {
   }
 
   orca.panels.handle('project.active', async () => (await activeProject()).project)
-  orca.panels.handle('board.load', loadBoard)
+  orca.panels.handle('issues.load', loadIssues)
+  orca.panels.handle('boardFields.load', loadBoardFields)
   orca.panels.handle('issue.start', (input) => {
     const key = `${input.projectId}#${input.issue.number}`
     const existing = starts.get(key)

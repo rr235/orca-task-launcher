@@ -25,10 +25,11 @@ import {
   Text,
   Textarea,
   update,
+  type JsonValue,
   type PanelContext
 } from 'orca'
-import { agentLabel } from './board'
-import { TEMPLATES_KEY, type Board, type Issue, type ProjectRef, type Templates } from './protocol'
+import { agentLabel, NO_BOARDS } from './issues'
+import { TEMPLATES_KEY, type BoardFields, type Issue, type IssueList, type ProjectRef, type Templates } from './protocol'
 import { readTemplates } from './rewrite'
 
 const SAVE_DELAY_MS = 600
@@ -37,22 +38,30 @@ const ANY = '*any'
 const NONE = '*none'
 const ME = '*me'
 
-type ReadyBoard = Extract<Board, { kind: 'ready' }>
+type ReadyIssueList = Extract<IssueList, { kind: 'ready' }>
+type CachedList = { list: ReadyIssueList; boards: BoardFields }
 type Filters = { status: string; assignee: string; label: string; author: string; milestone: string; type: string }
 type Display = { labels: boolean; fields: string[] }
 type Sections = { template: boolean; display: boolean; filter: boolean }
 
 const NO_FILTERS: Filters = { status: ANY, assignee: ANY, label: ANY, author: ANY, milestone: ANY, type: ANY }
 
-// The last board of each project, kept across panel runs: reopening shows the selected project's
-// own list at once while a fresh one loads, never another project's.
-const cache = atom<Record<string, ReadyBoard>>('boards', {}, { persist: 'plugin', version: 2, migrate: () => ({}) })
+// The last issue list of each project, kept across panel runs: reopening shows the selected project's
+// own list at once while a fresh one loads, never another project's. Its board fields come along.
+const cache = atom<Record<string, CachedList>>('issueLists', {}, { persist: 'plugin' })
+// The project the worker last named as selected: on open, its cached list shows before the worker answers.
+const lastProjectId = atom<string | null>('lastProjectId', null, { persist: 'plugin' })
 const display = atom<Display>('display', { labels: true, fields: ['Size'] }, { persist: 'plugin' })
 const filters = atom<Filters>('filters', NO_FILTERS, { persist: 'plugin', version: 2, migrate: () => NO_FILTERS })
 const sections = atom<Sections>('sections', { template: true, display: false, filter: false }, { persist: 'plugin' })
-const board = atom<Board | null>(null)
-const boardError = atom<string | null>(null)
+const issueList = atom<IssueList | null>(null)
+// The shown project's GitHub project board fields: they fill in after the issues and never block them.
+const boards = atom<BoardFields>(NO_BOARDS)
+const panelError = atom<string | null>(null)
 const templates = atom<Templates | null>(null)
+// The stored templates, which Orca loads before the first render: opening never waits on a storage read.
+// Read only; edits save through saveTemplates.
+const storedTemplates = atom<JsonValue>(TEMPLATES_KEY, null, { persist: 'storage' })
 // Keyed by project and issue number, so another project's issue of the same number is unaffected.
 const starting = atom<Record<string, boolean>>({})
 const startErrors = atom<Record<string, string>>({})
@@ -60,50 +69,85 @@ const startKey = (project: ProjectRef, issue: Issue): string => `${project.id}#$
 
 let saveTimer: ReturnType<typeof setTimeout> | null = null
 let loadSeq = 0
+// The project the shown list and board fields belong to, once the worker has named it.
+let shownProject: ProjectRef | null = null
+// Board answers can land out of order: an older one never replaces a newer one.
+let boardSeq = 0
+let boardApplied = 0
 let saving: Promise<void> = Promise.resolve()
 let pendingSaves = 0
 
-async function loadBoard(): Promise<void> {
+/** Shows the project's cached list and board fields, unless its list is already shown. */
+function showProject(project: ProjectRef | null): void {
+  shownProject = project
+  const shown = read(issueList)
+  if (project && shown?.kind === 'ready' && shown.project.id === project.id && shown.project.repo === project.repo) {
+    return
+  }
+  const cached = project ? read(cache)[project.id] : undefined
+  const usable = Boolean(project && cached?.list.project.repo === project.repo)
+  set(issueList, usable ? cached!.list : null)
+  set(boards, usable ? cached!.boards : NO_BOARDS)
+}
+
+async function loadIssues(): Promise<void> {
   const seq = ++loadSeq
-  // The shown list stays until the selected project is known, so a refresh never flashes a spinner.
+  // The shown list, on open the last project's cached one, stays until the selected project is known
+  // and is swapped only when that project differs, so neither opening nor a refresh flashes a spinner.
   let project: ProjectRef | null = null
   try {
     project = await plugin.request('project.active', undefined, { timeoutMs: 15000 })
     if (seq !== loadSeq) {
       return
     }
+    set(lastProjectId, project?.id ?? null)
     if (!project) {
-      set(board, { kind: 'no-project' })
-      set(boardError, null)
+      showProject(null)
+      set(issueList, { kind: 'no-project' })
+      set(panelError, null)
       return
     }
-    const shown = read(board)
-    if (shown?.kind !== 'ready' || shown.project.id !== project.id) {
-      const cached = read(cache)[project.id]
-      set(board, cached?.project.repo === project.repo ? cached : null)
-    }
-    const next = await plugin.request('board.load', { projectId: project.id }, { timeoutMs: 60000 })
+    showProject(project)
+    void loadBoardFields(project)
+    const next = await plugin.request('issues.load', { projectId: project.id }, { timeoutMs: 60000 })
     if (seq !== loadSeq) {
       return
     }
     if (next.kind === 'error') {
-      set(boardError, next.message)
+      set(panelError, next.message)
       return
     }
-    set(board, next)
-    set(boardError, null)
+    set(issueList, next)
+    set(panelError, null)
     if (next.kind === 'ready') {
-      update(cache, (all) => ({ ...all, [next.project.id]: next }))
+      update(cache, (all) => ({ ...all, [next.project.id]: { list: next, boards: read(boards) } }))
     }
   } catch {
     if (seq === loadSeq) {
       if (!project) {
         // Without the selected project, the shown list may be another project's.
-        set(board, null)
+        showProject(null)
       }
-      set(boardError, 'Could not load the issues.')
+      set(panelError, 'Could not load the issues.')
     }
   }
+}
+
+/** Fills in the project's board fields. A slow or failed board query leaves the list as it is. */
+async function loadBoardFields(project: ProjectRef): Promise<void> {
+  const seq = ++boardSeq
+  let next: BoardFields
+  try {
+    next = await plugin.request('boardFields.load', { repo: project.repo }, { timeoutMs: 60000 })
+  } catch {
+    return
+  }
+  if (seq <= boardApplied || project.id !== shownProject?.id || project.repo !== shownProject.repo) {
+    return
+  }
+  boardApplied = seq
+  set(boards, next)
+  update(cache, (all) => (all[project.id] ? { ...all, [project.id]: { ...all[project.id]!, boards: next } } : all))
 }
 
 async function loadTemplates(): Promise<void> {
@@ -119,17 +163,26 @@ async function loadTemplates(): Promise<void> {
 
 export function setup(ctx: PanelContext): () => void {
   ctx.subscriptions.push(
-    on('workspace.changed', () => void loadBoard()),
+    // Orca first delivers the current context to each new subscriber, which makes the first load.
+    on('workspace.changed', () => void loadIssues()),
     storage.onDidChange(({ key }) => {
       if (key === TEMPLATES_KEY) {
         void loadTemplates()
       }
     })
   )
-  void loadTemplates()
-  void loadBoard()
+  set(templates, readTemplates(read(storedTemplates)))
+  // Opening shows the last project's cached list at once; the first load swaps it if the project differs.
+  const last = read(lastProjectId)
+  const cached = last ? read(cache)[last] : undefined
+  if (cached) {
+    set(issueList, cached.list)
+    set(boards, cached.boards)
+  }
   return () => {
     ++loadSeq
+    boardApplied = boardSeq
+    shownProject = null
     if (saveTimer) {
       void saveTemplates().catch(() => {})
     }
@@ -163,7 +216,7 @@ function editTemplate(project: ProjectRef, template: string): void {
     clearTimeout(saveTimer)
   }
   saveTimer = setTimeout(() => {
-    void saveTemplates().catch(() => set(boardError, 'Could not save the prompt template.'))
+    void saveTemplates().catch(() => set(panelError, 'Could not save the prompt template.'))
   }, SAVE_DELAY_MS)
 }
 
@@ -198,10 +251,10 @@ async function start(project: ProjectRef, issue: Issue): Promise<void> {
   } catch {
     failed = true
   }
-  // A create that timed out here can still finish in Orca, so the board decides what happened:
+  // A create that timed out here can still finish in Orca, so the reloaded list decides what happened:
   // pressing Start again would make a second worktree.
-  await loadBoard()
-  const current = read(board)
+  await loadIssues()
+  const current = read(issueList)
   const landed = current?.kind === 'ready' && current.project.id === project.id && Boolean(current.sessions[issue.number])
   if (failed && !landed) {
     update(startErrors, (e) => ({ ...e, [key]: 'Could not confirm this start. Check Orca worktrees before retrying.' }))
@@ -210,7 +263,7 @@ async function start(project: ProjectRef, issue: Issue): Promise<void> {
 }
 
 function openWorktree(worktreeId: string): void {
-  void plugin.request('worktree.open', { worktreeId }).catch(() => set(boardError, 'Could not open the worktree.'))
+  void plugin.request('worktree.open', { worktreeId }).catch(() => set(panelError, 'Could not open the worktree.'))
 }
 
 function setFilter(key: keyof Filters, value: string): void {
@@ -225,14 +278,16 @@ function toggleField(field: string, checked: boolean, boardFields: string[]): vo
 }
 
 // Status comes from the project boards, so without a board Status field there is nothing to filter.
-const hasStatus = (current: ReadyBoard): boolean => current.fields.includes('Status')
+const hasStatus = (board: BoardFields): boolean => board.fields.includes('Status')
 
 /** The filters in use: a saved Status filter is ignored while the project has no board Status. */
-const activeFilters = (current: ReadyBoard): Filters =>
-  hasStatus(current) ? read(filters) : { ...read(filters), status: ANY }
+const activeFilters = (board: BoardFields): Filters => (hasStatus(board) ? read(filters) : { ...read(filters), status: ANY })
 
-function matches(issue: Issue, f: Filters, viewer: string | null): boolean {
-  const status = issue.fields.Status === undefined ? NONE : `=${issue.fields.Status}`
+/** The issue's values on the project boards, by field name. */
+const valuesOf = (board: BoardFields, issue: Issue): Record<string, string> => board.values[issue.number] ?? {}
+
+function matches(issue: Issue, values: Record<string, string>, f: Filters, viewer: string | null): boolean {
+  const status = values.Status === undefined ? NONE : `=${values.Status}`
   const assigned =
     f.assignee === ANY ||
     (f.assignee === NONE ? issue.assignees.length === 0 : issue.assignees.includes(f.assignee === ME ? (viewer ?? '') : f.assignee.slice(1)))
@@ -267,10 +322,11 @@ function pill(text: string) {
 }
 
 function IssueCard({ project, issue, shown }: { project: ProjectRef; issue: Issue; shown: string[] }) {
-  const ready = read(board)
+  const ready = read(issueList)
   const session = ready?.kind === 'ready' ? ready.sessions[issue.number] : undefined
   const busy = read(starting)[startKey(project, issue)]
   const error = read(startErrors)[startKey(project, issue)]
+  const values = valuesOf(read(boards), issue)
   return (
     <Box border radius="md" padding="sm">
       <Stack gap="xs">
@@ -280,7 +336,7 @@ function IssueCard({ project, issue, shown }: { project: ProjectRef; issue: Issu
         <Row justify="between" align="center" gap="xs" wrap>
           <Row gap="xs" align="center" wrap>
             {read(display).labels ? issue.labels.map((label) => <Badge tone="neutral">{label}</Badge>) : null}
-            {shown.map((field) => (issue.fields[field] ? pill(issue.fields[field]) : null))}
+            {shown.map((field) => (values[field] ? pill(values[field]) : null))}
           </Row>
           {session ? null : busy ? (
             <Spinner label={`Starting #${issue.number}`} labelHidden />
@@ -341,23 +397,23 @@ function DisplayFields({ boardFields }: { boardFields: string[] }) {
   )
 }
 
-function FilterControls({ current, applied }: { current: ReadyBoard; applied: number }) {
+function FilterControls({ current, board, applied }: { current: ReadyIssueList; board: BoardFields; applied: number }) {
   const f = read(filters)
   const { issues } = current
-  const hasNoStatus = issues.some((i) => !i.fields.Status)
+  const statuses = issues.map((i) => valuesOf(board, i).Status ?? null)
   const hasNoMilestone = issues.some((i) => !i.milestone)
   return (
     <Stack gap="sm">
-      {hasStatus(current) ? (
+      {hasStatus(board) ? (
         <Select
           label="Status"
           value={f.status}
           onChange={(v) => setFilter('status', v)}
           options={options(
-            [{ value: ANY, label: 'All states' }, ...(hasNoStatus ? [{ value: NONE, label: 'No status' }] : [])],
-            issues.map((i) => i.fields.Status ?? null),
+            [{ value: ANY, label: 'All states' }, ...(statuses.some((s) => !s) ? [{ value: NONE, label: 'No status' }] : [])],
+            statuses,
             f.status,
-            current.states
+            board.states
           )}
         />
       ) : null}
@@ -415,14 +471,14 @@ function FilterControls({ current, applied }: { current: ReadyBoard; applied: nu
 }
 
 export default function Panel() {
-  const current = read(board)
-  const problem = read(boardError)
+  const current = read(issueList)
+  const problem = read(panelError)
   if (problem && !current) {
     return (
       <Stack gap="sm">
         <Text tone="danger">{problem}</Text>
         <Row>
-          <Button size="sm" variant="outline" icon="refresh" onPress={loadBoard}>
+          <Button size="sm" variant="outline" icon="refresh" onPress={loadIssues}>
             Try again
           </Button>
         </Row>
@@ -443,10 +499,11 @@ export default function Panel() {
     )
   }
   const { project, issues } = current
-  const f = activeFilters(current)
+  const board = read(boards)
+  const f = activeFilters(board)
   const applied = (Object.keys(NO_FILTERS) as (keyof Filters)[]).filter((k) => f[k] !== ANY).length
-  const visible = issues.filter((issue) => matches(issue, f, current.viewer))
-  const shown = current.fields.filter((field) => read(display).fields.includes(field))
+  const visible = issues.filter((issue) => matches(issue, valuesOf(board, issue), f, current.viewer))
+  const shown = board.fields.filter((field) => read(display).fields.includes(field))
   const open = read(sections)
   const toggle = (key: keyof Sections) => (value: boolean) => update(sections, (s) => ({ ...s, [key]: value }))
   return (
@@ -466,17 +523,17 @@ export default function Panel() {
         </Stack>
       </Collapsible>
       <Collapsible title="Display fields" open={open.display} onChange={toggle('display')}>
-        <DisplayFields boardFields={current.fields} />
+        <DisplayFields boardFields={board.fields} />
       </Collapsible>
       <Collapsible title={applied ? `Filter (${applied})` : 'Filter'} open={open.filter} onChange={toggle('filter')}>
-        <FilterControls current={current} applied={applied} />
+        <FilterControls current={current} board={board} applied={applied} />
       </Collapsible>
       {problem ? (
         <Row justify="between" align="center" gap="xs" wrap>
           <Text size="sm" tone="danger">
             {problem}
           </Text>
-          <Button size="xs" variant="ghost" icon="refresh" onPress={loadBoard}>
+          <Button size="xs" variant="ghost" icon="refresh" onPress={loadIssues}>
             Try again
           </Button>
         </Row>
