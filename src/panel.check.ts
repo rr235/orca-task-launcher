@@ -2,7 +2,7 @@
 // `demo` is the plugin page screenshot: a made-up project, with every worker request stubbed so no
 // real issue reaches the image.
 import { defineCheck } from 'orca/testing'
-import type { Board, Issue } from './protocol'
+import type { IssueList, Issue } from './protocol'
 
 const PROJECT = { id: 'github:acme/web', repo: 'acme/web', name: 'Web' }
 const TEMPLATE = 'Work on {{issue_url}}\n\n1. Follow the project conventions.\n2. Add focused tests for the change.\n3. Open a pull request when done.'
@@ -19,7 +19,7 @@ const issue = (number: number, title: string, label: string, size: string, statu
   fields: { Status: status, Size: size }
 })
 
-const DEMO: Board = {
+const DEMO: IssueList = {
   kind: 'ready',
   project: PROJECT,
   issues: [
@@ -45,7 +45,7 @@ export default defineCheck({
     storage: { templates },
     requests: {
       'project.active': () => PROJECT,
-      'board.load': () => DEMO,
+      'issues.load': () => DEMO,
       'issue.start': () => null,
       'worktree.open': () => null
     }

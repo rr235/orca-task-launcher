@@ -27,8 +27,8 @@ import {
   update,
   type PanelContext
 } from 'orca'
-import { agentLabel } from './board'
-import { TEMPLATES_KEY, type Board, type Issue, type ProjectRef, type Templates } from './protocol'
+import { agentLabel } from './issues'
+import { TEMPLATES_KEY, type IssueList, type Issue, type ProjectRef, type Templates } from './protocol'
 import { readTemplates } from './rewrite'
 
 const SAVE_DELAY_MS = 600
@@ -37,21 +37,21 @@ const ANY = '*any'
 const NONE = '*none'
 const ME = '*me'
 
-type ReadyBoard = Extract<Board, { kind: 'ready' }>
+type ReadyIssueList = Extract<IssueList, { kind: 'ready' }>
 type Filters = { status: string; assignee: string; label: string; author: string; milestone: string; type: string }
 type Display = { labels: boolean; fields: string[] }
 type Sections = { template: boolean; display: boolean; filter: boolean }
 
 const NO_FILTERS: Filters = { status: ANY, assignee: ANY, label: ANY, author: ANY, milestone: ANY, type: ANY }
 
-// The last board of each project, kept across panel runs: reopening shows the selected project's
+// The last issue list of each project, kept across panel runs: reopening shows the selected project's
 // own list at once while a fresh one loads, never another project's.
-const cache = atom<Record<string, ReadyBoard>>('boards', {}, { persist: 'plugin', version: 2, migrate: () => ({}) })
+const cache = atom<Record<string, ReadyIssueList>>('issueLists', {}, { persist: 'plugin' })
 const display = atom<Display>('display', { labels: true, fields: ['Size'] }, { persist: 'plugin' })
 const filters = atom<Filters>('filters', NO_FILTERS, { persist: 'plugin', version: 2, migrate: () => NO_FILTERS })
 const sections = atom<Sections>('sections', { template: true, display: false, filter: false }, { persist: 'plugin' })
-const board = atom<Board | null>(null)
-const boardError = atom<string | null>(null)
+const issueList = atom<IssueList | null>(null)
+const panelError = atom<string | null>(null)
 const templates = atom<Templates | null>(null)
 // Keyed by project and issue number, so another project's issue of the same number is unaffected.
 const starting = atom<Record<string, boolean>>({})
@@ -63,7 +63,7 @@ let loadSeq = 0
 let saving: Promise<void> = Promise.resolve()
 let pendingSaves = 0
 
-async function loadBoard(): Promise<void> {
+async function loadIssues(): Promise<void> {
   const seq = ++loadSeq
   // The shown list stays until the selected project is known, so a refresh never flashes a spinner.
   let project: ProjectRef | null = null
@@ -73,25 +73,25 @@ async function loadBoard(): Promise<void> {
       return
     }
     if (!project) {
-      set(board, { kind: 'no-project' })
-      set(boardError, null)
+      set(issueList, { kind: 'no-project' })
+      set(panelError, null)
       return
     }
-    const shown = read(board)
+    const shown = read(issueList)
     if (shown?.kind !== 'ready' || shown.project.id !== project.id) {
       const cached = read(cache)[project.id]
-      set(board, cached?.project.repo === project.repo ? cached : null)
+      set(issueList, cached?.project.repo === project.repo ? cached : null)
     }
-    const next = await plugin.request('board.load', { projectId: project.id }, { timeoutMs: 60000 })
+    const next = await plugin.request('issues.load', { projectId: project.id }, { timeoutMs: 60000 })
     if (seq !== loadSeq) {
       return
     }
     if (next.kind === 'error') {
-      set(boardError, next.message)
+      set(panelError, next.message)
       return
     }
-    set(board, next)
-    set(boardError, null)
+    set(issueList, next)
+    set(panelError, null)
     if (next.kind === 'ready') {
       update(cache, (all) => ({ ...all, [next.project.id]: next }))
     }
@@ -99,9 +99,9 @@ async function loadBoard(): Promise<void> {
     if (seq === loadSeq) {
       if (!project) {
         // Without the selected project, the shown list may be another project's.
-        set(board, null)
+        set(issueList, null)
       }
-      set(boardError, 'Could not load the issues.')
+      set(panelError, 'Could not load the issues.')
     }
   }
 }
@@ -119,7 +119,7 @@ async function loadTemplates(): Promise<void> {
 
 export function setup(ctx: PanelContext): () => void {
   ctx.subscriptions.push(
-    on('workspace.changed', () => void loadBoard()),
+    on('workspace.changed', () => void loadIssues()),
     storage.onDidChange(({ key }) => {
       if (key === TEMPLATES_KEY) {
         void loadTemplates()
@@ -127,7 +127,7 @@ export function setup(ctx: PanelContext): () => void {
     })
   )
   void loadTemplates()
-  void loadBoard()
+  void loadIssues()
   return () => {
     ++loadSeq
     if (saveTimer) {
@@ -163,7 +163,7 @@ function editTemplate(project: ProjectRef, template: string): void {
     clearTimeout(saveTimer)
   }
   saveTimer = setTimeout(() => {
-    void saveTemplates().catch(() => set(boardError, 'Could not save the prompt template.'))
+    void saveTemplates().catch(() => set(panelError, 'Could not save the prompt template.'))
   }, SAVE_DELAY_MS)
 }
 
@@ -198,10 +198,10 @@ async function start(project: ProjectRef, issue: Issue): Promise<void> {
   } catch {
     failed = true
   }
-  // A create that timed out here can still finish in Orca, so the board decides what happened:
+  // A create that timed out here can still finish in Orca, so the reloaded list decides what happened:
   // pressing Start again would make a second worktree.
-  await loadBoard()
-  const current = read(board)
+  await loadIssues()
+  const current = read(issueList)
   const landed = current?.kind === 'ready' && current.project.id === project.id && Boolean(current.sessions[issue.number])
   if (failed && !landed) {
     update(startErrors, (e) => ({ ...e, [key]: 'Could not confirm this start. Check Orca worktrees before retrying.' }))
@@ -210,7 +210,7 @@ async function start(project: ProjectRef, issue: Issue): Promise<void> {
 }
 
 function openWorktree(worktreeId: string): void {
-  void plugin.request('worktree.open', { worktreeId }).catch(() => set(boardError, 'Could not open the worktree.'))
+  void plugin.request('worktree.open', { worktreeId }).catch(() => set(panelError, 'Could not open the worktree.'))
 }
 
 function setFilter(key: keyof Filters, value: string): void {
@@ -225,10 +225,10 @@ function toggleField(field: string, checked: boolean, boardFields: string[]): vo
 }
 
 // Status comes from the project boards, so without a board Status field there is nothing to filter.
-const hasStatus = (current: ReadyBoard): boolean => current.fields.includes('Status')
+const hasStatus = (current: ReadyIssueList): boolean => current.fields.includes('Status')
 
 /** The filters in use: a saved Status filter is ignored while the project has no board Status. */
-const activeFilters = (current: ReadyBoard): Filters =>
+const activeFilters = (current: ReadyIssueList): Filters =>
   hasStatus(current) ? read(filters) : { ...read(filters), status: ANY }
 
 function matches(issue: Issue, f: Filters, viewer: string | null): boolean {
@@ -267,7 +267,7 @@ function pill(text: string) {
 }
 
 function IssueCard({ project, issue, shown }: { project: ProjectRef; issue: Issue; shown: string[] }) {
-  const ready = read(board)
+  const ready = read(issueList)
   const session = ready?.kind === 'ready' ? ready.sessions[issue.number] : undefined
   const busy = read(starting)[startKey(project, issue)]
   const error = read(startErrors)[startKey(project, issue)]
@@ -341,7 +341,7 @@ function DisplayFields({ boardFields }: { boardFields: string[] }) {
   )
 }
 
-function FilterControls({ current, applied }: { current: ReadyBoard; applied: number }) {
+function FilterControls({ current, applied }: { current: ReadyIssueList; applied: number }) {
   const f = read(filters)
   const { issues } = current
   const hasNoStatus = issues.some((i) => !i.fields.Status)
@@ -415,14 +415,14 @@ function FilterControls({ current, applied }: { current: ReadyBoard; applied: nu
 }
 
 export default function Panel() {
-  const current = read(board)
-  const problem = read(boardError)
+  const current = read(issueList)
+  const problem = read(panelError)
   if (problem && !current) {
     return (
       <Stack gap="sm">
         <Text tone="danger">{problem}</Text>
         <Row>
-          <Button size="sm" variant="outline" icon="refresh" onPress={loadBoard}>
+          <Button size="sm" variant="outline" icon="refresh" onPress={loadIssues}>
             Try again
           </Button>
         </Row>
@@ -476,7 +476,7 @@ export default function Panel() {
           <Text size="sm" tone="danger">
             {problem}
           </Text>
-          <Button size="xs" variant="ghost" icon="refresh" onPress={loadBoard}>
+          <Button size="xs" variant="ghost" icon="refresh" onPress={loadIssues}>
             Try again
           </Button>
         </Row>

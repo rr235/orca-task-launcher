@@ -7,17 +7,17 @@ import type { OrcaWorkerApi } from 'orca/worker'
 import {
   activeProjectId,
   BOARDS_QUERY,
-  boardLoadMessage,
+  loadErrorMessage,
   createArgs,
   ISSUES_QUERY,
   NO_BOARDS,
   parseBoards,
   parseRepoIssues,
   sessionsFor
-} from './board'
+} from './issues'
 import { run } from './cli'
 import { listProjects } from './projects'
-import { TEMPLATES_KEY, type Board, type Issue, type ProjectRef } from './protocol'
+import { TEMPLATES_KEY, type IssueList, type Issue, type ProjectRef } from './protocol'
 import { applyIssueTemplate, parseIssueLaunch, pickTemplate, readTemplates, renderTemplate } from './rewrite'
 import { readDefaultAgent } from './settings'
 
@@ -40,7 +40,7 @@ export default function activate(orca: OrcaWorkerApi): void {
     return { project, psJson, listJson }
   }
 
-  async function loadBoard({ projectId }: { projectId: string }): Promise<Board> {
+  async function loadIssues({ projectId }: { projectId: string }): Promise<IssueList> {
     let projects: ProjectRef[], psJson: string, listJson: string
     try {
       ;[projects, psJson, listJson] = await Promise.all([
@@ -49,8 +49,8 @@ export default function activate(orca: OrcaWorkerApi): void {
         run('orca', ['worktree', 'list', '--json'])
       ])
     } catch (error) {
-      log(`board.load: orca failed: ${(error as Error).message}`)
-      return { kind: 'error', message: boardLoadMessage(error as Error, 'orca') }
+      log(`issues.load: orca failed: ${(error as Error).message}`)
+      return { kind: 'error', message: loadErrorMessage(error as Error, 'orca') }
     }
     const project = projects.find((p) => p.id === projectId)
     if (!project) {
@@ -63,7 +63,7 @@ export default function activate(orca: OrcaWorkerApi): void {
     const boards = graphql(BOARDS_QUERY)
       .then(parseBoards)
       .catch((error: Error) => {
-        log(`board.load: no board fields: ${error.message}`)
+        log(`issues.load: no board fields: ${error.message}`)
         return NO_BOARDS
       })
     let loaded: ReturnType<typeof parseRepoIssues>
@@ -71,8 +71,8 @@ export default function activate(orca: OrcaWorkerApi): void {
       const issuesJson = await graphql(ISSUES_QUERY)
       loaded = parseRepoIssues(issuesJson, await boards)
     } catch (error) {
-      log(`board.load: gh failed: ${(error as Error).message}`)
-      return { kind: 'error', message: boardLoadMessage(error as Error, 'gh') }
+      log(`issues.load: gh failed: ${(error as Error).message}`)
+      return { kind: 'error', message: loadErrorMessage(error as Error, 'gh') }
     }
     const { issues, states, fields, viewer } = loaded
     return { kind: 'ready', project, issues, sessions: sessionsFor(project.id, listJson, psJson), states, fields, viewer }
@@ -111,7 +111,7 @@ export default function activate(orca: OrcaWorkerApi): void {
   }
 
   orca.panels.handle('project.active', async () => (await activeProject()).project)
-  orca.panels.handle('board.load', loadBoard)
+  orca.panels.handle('issues.load', loadIssues)
   orca.panels.handle('issue.start', (input) => {
     const key = `${input.projectId}#${input.issue.number}`
     const existing = starts.get(key)

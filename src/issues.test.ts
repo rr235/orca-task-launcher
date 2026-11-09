@@ -1,8 +1,8 @@
-// The board's reads of real `orca` and `gh` output shapes, trimmed to the fields used.
+// Reads of real `orca` and `gh` output shapes, trimmed to the fields used.
 import { assert, test } from 'orca/testing'
 import {
   activeProjectId,
-  boardLoadMessage,
+  loadErrorMessage,
   createArgs,
   BOARDS_QUERY,
   ISSUES_QUERY,
@@ -11,7 +11,7 @@ import {
   parseRepoIssues,
   sessionsFor,
   worktreeName
-} from './board'
+} from './issues'
 
 const ID_42 = 'repo1::/work/issue-42-add-dark-mode'
 const list = JSON.stringify({
@@ -63,14 +63,14 @@ test('a board query refused for scope fails, so the issues show without board fi
 })
 
 test('a failed load says what to fix', () => {
-  assert.match(boardLoadMessage({ message: 'spawn gh ENOENT', notFound: true }, 'gh'), /not found/)
-  assert.match(boardLoadMessage({ message: 'gh: Bad credentials (HTTP 401)' }, 'gh'), /gh auth login/)
-  assert.match(boardLoadMessage({ message: 'To get started with GitHub CLI, please run:  gh auth login' }, 'gh'), /not signed in/)
+  assert.match(loadErrorMessage({ message: 'spawn gh ENOENT', notFound: true }, 'gh'), /not found/)
+  assert.match(loadErrorMessage({ message: 'gh: Bad credentials (HTTP 401)' }, 'gh'), /gh auth login/)
+  assert.match(loadErrorMessage({ message: 'To get started with GitHub CLI, please run:  gh auth login' }, 'gh'), /not signed in/)
   assert.equal(
-    boardLoadMessage({ message: "gh: Could not resolve to a Repository with the name 'acme/web'." }, 'gh'),
+    loadErrorMessage({ message: "gh: Could not resolve to a Repository with the name 'acme/web'." }, 'gh'),
     "GitHub could not load the issues: Could not resolve to a Repository with the name 'acme/web'."
   )
-  assert.match(boardLoadMessage({ message: 'connect ECONNREFUSED' }, 'orca'), /Orca CLI/)
+  assert.match(loadErrorMessage({ message: 'connect ECONNREFUSED' }, 'orca'), /Orca CLI/)
 })
 
 test('the active project is the project of the worktree selected in the sidebar', () => {

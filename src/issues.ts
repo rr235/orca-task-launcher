@@ -1,4 +1,4 @@
-// Pure reads of the `orca` and `gh` CLI output the board is built from, and the worktree create
+// Pure reads of the `orca` and `gh` CLI output the issue list is built from, and the worktree create
 // command a Start runs. The worker does the I/O; everything here is testable without it.
 import type { Issue, Session } from './protocol'
 
@@ -102,8 +102,8 @@ fragment Board on ProjectV2 {
   field(name: "Status") { ... on ProjectV2SingleSelectField { options { name } } }
 }`
 
-/** What the panel says when the board cannot load, from the error the CLI run gave. */
-export function boardLoadMessage(error: { message?: string; notFound?: boolean }, tool: 'orca' | 'gh'): string {
+/** What the panel says when the issues cannot load, from the error the CLI run gave. */
+export function loadErrorMessage(error: { message?: string; notFound?: boolean }, tool: 'orca' | 'gh'): string {
   const message = error.message ?? ''
   if (tool === 'orca') {
     return 'Could not reach the Orca CLI. Check that Orca is running, then try again.'

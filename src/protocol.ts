@@ -25,9 +25,9 @@ export type Issue = {
 export type Session = { worktreeId: string; name: string; agent: string | null }
 
 /** What the panel shows: the focused workspace's project, its open issues and their worktrees. */
-export type Board =
+export type IssueList =
   | { kind: 'no-project' }
-  /** The board could not load; `message` says why and what to do. */
+  /** The issues could not load; `message` says why and what to do. */
   | { kind: 'error'; message: string }
   | {
       kind: 'ready'
@@ -46,8 +46,8 @@ declare module 'orca' {
   interface PluginRequests {
     /** The project of the worktree selected in the sidebar, fast: no GitHub call. */
     'project.active': { output: ProjectRef | null }
-    /** The board for the project of the focused workspace. */
-    'board.load': { input: { projectId: string }; output: Board }
+    /** The issue list for the project of the focused workspace. */
+    'issues.load': { input: { projectId: string }; output: IssueList }
     /** Creates a worktree for the issue and starts the default agent on the rendered template. */
     'issue.start': { input: { projectId: string; repo: string; issue: Issue }; output: null }
     /** Shows the worktree in Orca. */

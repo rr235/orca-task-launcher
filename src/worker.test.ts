@@ -4,7 +4,7 @@ import { execFileSync } from 'node:child_process'
 import childProcess from 'node:child_process'
 import { syncBuiltinESMExports } from 'node:module'
 import { mock } from 'node:test'
-import { BOARDS_QUERY, ISSUES_QUERY } from './board'
+import { BOARDS_QUERY, ISSUES_QUERY } from './issues'
 import { parseProjectList } from './projects'
 import { TEMPLATES_KEY, type Templates } from './protocol'
 import { applyIssueTemplate, readTemplates } from './rewrite'
@@ -34,7 +34,7 @@ const TEMPLATES: Templates = {
   ]
 }
 
-test('board loads survive optional failures and report required response failures', async () => {
+test('issue list loads survive optional failures and report required response failures', async () => {
   let issues = JSON.stringify({ data: { repository: { issues: { nodes: [{ number: 14, title: 'Fix', url: URL }] } } } })
   let boardResponse = JSON.stringify({ errors: [{ message: 'read:project scope required' }] })
   const queries: string[] = []
@@ -55,7 +55,7 @@ test('board loads survive optional failures and report required response failure
   syncBuiltinESMExports()
   const worker = await mountWorker(main, withTemplates())
   try {
-    const first = await worker.request('board.load', { projectId: 'github:acme/web' })
+    const first = await worker.request('issues.load', { projectId: 'github:acme/web' })
     assert.equal(first.kind, 'ready')
     if (first.kind === 'ready') {
       assert.equal(first.issues.length, 1)
@@ -65,13 +65,13 @@ test('board loads survive optional failures and report required response failure
     assert.ok(queries.includes(ISSUES_QUERY))
     assert.ok(queries.includes(BOARDS_QUERY))
     boardResponse = 'invalid JSON'
-    assert.equal((await worker.request('board.load', { projectId: 'github:acme/web' })).kind, 'ready')
+    assert.equal((await worker.request('issues.load', { projectId: 'github:acme/web' })).kind, 'ready')
     for (const response of [
       { data: { repository: null } },
       { errors: [{ message: 'Repository access denied' }] }
     ]) {
       issues = JSON.stringify(response)
-      const failed = await worker.request('board.load', { projectId: 'github:acme/web' })
+      const failed = await worker.request('issues.load', { projectId: 'github:acme/web' })
       assert.equal(failed.kind, 'error')
       if (failed.kind === 'error') {
         assert.match(failed.message, /GitHub could not load the issues:/)
