@@ -96,6 +96,30 @@ test('a GitHub label that matches a control sentinel remains filterable', async 
   await view.unmount()
 })
 
+test('a project switch that sends no workspace event still shows the new project', async () => {
+  const OTHER = { id: 'github:acme/api', repo: 'acme/api', name: 'API' }
+  const otherBoard: Board = { ...READY, project: OTHER, issues: [{ ...BACKLOG, number: 7, url: 'https://github.com/acme/api/issues/7' }] }
+  let active = PROJECT
+  const h = mockHost({
+    capabilities: CAPABILITIES,
+    requests: {
+      'project.active': () => active,
+      'board.load': (input: { projectId: string }) => (input.projectId === OTHER.id ? otherBoard : READY)
+    }
+  })
+  const view = await mount(panel, { host: h })
+  assert.ok(view.find({ label: 'Start #159' }))
+  await panel.checkActiveProject()
+  await view.settled()
+  assert.ok(view.find({ label: 'Start #159' }))
+  active = OTHER
+  await panel.checkActiveProject()
+  await view.settled()
+  assert.equal(view.find({ label: 'Start #159' }), null)
+  assert.ok(view.find({ label: 'Start #7' }))
+  await view.unmount()
+})
+
 test('a failed project lookup hides the previous project issues', async () => {
   let offline = false
   const h = mockHost({
