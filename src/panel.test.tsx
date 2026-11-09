@@ -1,6 +1,7 @@
 // `orca plugin test .` runs this in Node with the same runtime and checks Orca uses.
 import { assert, mockHost, mount, stored, test, type MockRequests, type TestPanel } from 'orca/testing'
 import { NO_BOARDS } from './issues'
+import { Spinner, type JsonValue } from 'orca'
 import type { BoardFields, Issue, IssueList } from './protocol'
 import * as panel from './panel'
 
@@ -39,9 +40,10 @@ const SAVED_READY = { status: '=Ready', assignee: '*any', label: '*any', author:
 const CAPABILITIES = ['storage:own', 'workspace:read']
 
 /** A worker that answers with READY and BOARDS, unless a request is overridden. */
-const worker = (requests: MockRequests = {}) =>
+const worker = (requests: MockRequests = {}, storage?: Record<string, JsonValue>) =>
   mockHost({
     capabilities: CAPABILITIES,
+    storage,
     requests: { 'project.active': () => PROJECT, 'issues.load': () => READY, 'boardFields.load': () => BOARDS, ...requests }
   })
 
@@ -364,13 +366,24 @@ test('filters narrow the list, count in the title, and Clear all resets them', a
   await view.unmount()
 })
 
-test('reopening shows the last project cached list with no spinner before the worker names the project', async () => {
+test('reopening shows the last project cached list and stored template with no spinner before any answer', async () => {
   const first = await open({ host: host(READY).host })
   const persisted = { plugin: first.persisted.plugin }
   await first.unmount()
   const active = held<typeof PROJECT>()
-  const view = await mount(panel, { host: worker({ 'project.active': () => active.promise }), persisted })
+  const saved = { default: 'Complete {{issue_url}}', projects: [{ repo: 'acme/web', name: 'Web', template: 'Review {{issue_url}}' }] }
+  const h = worker({ 'project.active': () => active.promise }, { templates: saved })
+  // Records each frame the panel draws, so the first one can be checked, not only the settled one.
+  const frames: { type?: unknown }[] = []
+  const draw = () => {
+    const node = panel.default()
+    frames.push(node as { type?: unknown })
+    return node
+  }
+  const view = await mount({ setup: panel.setup, default: draw }, { host: h, persisted })
+  assert.notEqual(frames[0]?.type, Spinner)
   assert.ok(view.find({ label: 'Start #159' }))
+  assert.equal(view.valueOf({ label: 'Web prompt template' }), 'Review {{issue_url}}')
   assert.ok(view.find({ text: 'M' }))
   assert.equal(view.find({ label: 'Loading issues' }), null)
   const loading = view.emit('workspace.changed', { context: null })

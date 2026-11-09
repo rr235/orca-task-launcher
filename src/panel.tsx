@@ -25,6 +25,7 @@ import {
   Text,
   Textarea,
   update,
+  type JsonValue,
   type PanelContext
 } from 'orca'
 import { agentLabel, NO_BOARDS } from './issues'
@@ -58,6 +59,9 @@ const issueList = atom<IssueList | null>(null)
 const boards = atom<BoardFields>(NO_BOARDS)
 const panelError = atom<string | null>(null)
 const templates = atom<Templates | null>(null)
+// The stored templates, which Orca loads before the first render: opening never waits on a storage read.
+// Read only; edits save through saveTemplates.
+const storedTemplates = atom<JsonValue>(TEMPLATES_KEY, null, { persist: 'storage' })
 // Keyed by project and issue number, so another project's issue of the same number is unaffected.
 const starting = atom<Record<string, boolean>>({})
 const startErrors = atom<Record<string, string>>({})
@@ -167,7 +171,7 @@ export function setup(ctx: PanelContext): () => void {
       }
     })
   )
-  void loadTemplates()
+  set(templates, readTemplates(read(storedTemplates)))
   // Opening shows the last project's cached list at once; the first load swaps it if the project differs.
   const last = read(lastProjectId)
   const cached = last ? read(cache)[last] : undefined
