@@ -48,6 +48,8 @@ const templates = { default: 'Complete {{issue_url}}', projects: [{ repo: PROJEC
 export default defineCheck({
   demo: {
     storage: { templates },
+    // Orca first delivers the current context to each new subscriber, which makes the first load.
+    events: [{ event: 'workspace.changed', payload: { context: null } }],
     requests: {
       'project.active': () => PROJECT,
       'issues.load': () => DEMO,

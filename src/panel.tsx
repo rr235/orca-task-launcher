@@ -155,6 +155,7 @@ async function loadTemplates(): Promise<void> {
 
 export function setup(ctx: PanelContext): () => void {
   ctx.subscriptions.push(
+    // Orca first delivers the current context to each new subscriber, which makes the first load.
     on('workspace.changed', () => void loadIssues()),
     storage.onDidChange(({ key }) => {
       if (key === TEMPLATES_KEY) {
@@ -163,7 +164,6 @@ export function setup(ctx: PanelContext): () => void {
     })
   )
   void loadTemplates()
-  void loadIssues()
   return () => {
     ++loadSeq
     boardApplied = boardSeq

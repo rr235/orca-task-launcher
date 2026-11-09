@@ -64,6 +64,14 @@ const host = (list: IssueList, started: IssueList = STARTED, boards: BoardFields
   }
 }
 
+/** Opens the panel as Orca does: Orca first delivers the current context to each new
+ *  `workspace.changed` subscriber, which the test host leaves to the test. */
+async function open(options: Parameters<typeof mount>[1]): Promise<TestPanel> {
+  const view = await mount(panel, options)
+  await view.emit('workspace.changed', { context: null })
+  return view
+}
+
 /** A promise the test settles, to hold a worker request open. */
 function held<T>() {
   let resolve: (value: T) => void = () => {}
@@ -86,7 +94,7 @@ async function until(view: TestPanel, check: () => unknown): Promise<void> {
 test('Start flushes a template edit before asking the worker to launch', async () => {
   let saved: unknown
   const h = worker({ 'issue.start': () => { saved = h.data().storage.templates; return null } })
-  const view = await mount(panel, { host: h })
+  const view = await open({ host: h })
   await view.type({ label: 'Web prompt template' }, 'Review {{issue_url}}', { replace: true })
   await view.press({ label: 'Start #159' })
   assert.deepEqual(saved, {
@@ -96,9 +104,22 @@ test('Start flushes a template edit before asking the worker to launch', async (
   await view.unmount()
 })
 
+test('opening the panel loads the issues and board fields once', async () => {
+  const counts = { active: 0, issues: 0, boards: 0 }
+  const h = worker({
+    'project.active': () => (counts.active++, PROJECT),
+    'issues.load': () => (counts.issues++, READY),
+    'boardFields.load': () => (counts.boards++, BOARDS)
+  })
+  const view = await open({ host: h })
+  assert.ok(view.find({ label: 'Start #159' }))
+  assert.deepEqual(counts, { active: 1, issues: 1, boards: 1 })
+  await view.unmount()
+})
+
 test('a GitHub label that matches a control sentinel remains filterable', async () => {
   const sentinelList: IssueList = { ...READY, issues: [{ ...ISSUE, labels: ['*any'] }, BACKLOG] }
-  const view = await mount(panel, { host: worker({ 'issues.load': () => sentinelList }) })
+  const view = await open({ host: worker({ 'issues.load': () => sentinelList }) })
   await view.toggle({ label: 'Filter' })
   await view.select({ label: 'Label' }, '=*any')
   assert.ok(view.find({ label: 'Start #159' }))
@@ -109,7 +130,7 @@ test('a GitHub label that matches a control sentinel remains filterable', async 
 test('a failed project lookup hides the previous project issues', async () => {
   let offline = false
   const h = worker({ 'project.active': () => { if (offline) { throw new Error('offline') }; return PROJECT } })
-  const view = await mount(panel, { host: h })
+  const view = await open({ host: h })
   assert.ok(view.find({ label: 'Start #159' }))
   offline = true
   await view.emit('workspace.changed', { context: null })
@@ -120,13 +141,13 @@ test('a failed project lookup hides the previous project issues', async () => {
 
 test('a load error shows its own message', async () => {
   const message = 'gh is not signed in. Run gh auth login in a terminal, then try again.'
-  const view = await mount(panel, { host: worker({ 'issues.load': () => ({ kind: 'error', message }) }) })
+  const view = await open({ host: worker({ 'issues.load': () => ({ kind: 'error', message }) }) })
   assert.ok(view.find({ text: message }))
   await view.unmount()
 })
 
 test('without boards, every issue shows, with no Status filter, even one saved earlier', async () => {
-  const view = await mount(panel, { host: host(READY, STARTED, NO_BOARDS).host, persisted: { plugin: { filters: stored(SAVED_READY, 2) } } })
+  const view = await open({ host: host(READY, STARTED, NO_BOARDS).host, persisted: { plugin: { filters: stored(SAVED_READY, 2) } } })
   assert.ok(view.find({ label: 'Start #159' }))
   assert.ok(view.find({ label: 'Start #62' }))
   await view.toggle({ label: 'Filter' })
@@ -137,7 +158,7 @@ test('without boards, every issue shows, with no Status filter, even one saved e
 
 test('an answer with no boards replaces cached board filters, and returning fields reuse the saved Status', async () => {
   let boards: BoardFields = NO_BOARDS
-  const view = await mount(panel, {
+  const view = await open({
     host: worker({ 'boardFields.load': () => boards }),
     persisted: { plugin: { issueLists: { [PROJECT.id]: { list: READY, boards: BOARDS } }, filters: stored(SAVED_READY, 2) } }
   })
@@ -156,7 +177,7 @@ test('an answer with no boards replaces cached board filters, and returning fiel
 test('issues render before the board fields answer, which then fill in', async () => {
   let list: IssueList = READY
   let boards: () => BoardFields | Promise<BoardFields> = () => NO_BOARDS
-  const view = await mount(panel, { host: worker({ 'issues.load': () => list, 'boardFields.load': () => boards() }) })
+  const view = await open({ host: worker({ 'issues.load': () => list, 'boardFields.load': () => boards() }) })
   assert.equal(view.find({ text: 'M' }), null)
   const pending = held<BoardFields>()
   list = { ...READY, issues: [{ ...ISSUE, number: 7, title: 'A new issue' }, ...READY.issues] }
@@ -173,7 +194,7 @@ test('issues render before the board fields answer, which then fill in', async (
 test('a failed board query leaves the list and its fields intact', async () => {
   let failing = false
   const h = worker({ 'boardFields.load': () => { if (failing) { throw new Error('read:project scope required') }; return BOARDS } })
-  const view = await mount(panel, { host: h })
+  const view = await open({ host: h })
   assert.ok(view.find({ text: 'M' }))
   failing = true
   await view.emit('workspace.changed', { context: null })
@@ -187,7 +208,7 @@ test('a failed board query leaves the list and its fields intact', async () => {
 
 test('a structured refresh error preserves the selected project cache', async () => {
   const message = 'GitHub could not load the issues: unavailable'
-  const view = await mount(panel, {
+  const view = await open({
     host: worker({ 'issues.load': () => ({ kind: 'error', message }) }),
     persisted: { plugin: { issueLists: { [PROJECT.id]: { list: READY, boards: BOARDS } } } }
   })
@@ -199,7 +220,7 @@ test('a structured refresh error preserves the selected project cache', async ()
 
 test('Start still works after loading without project boards', async () => {
   const { host: h, calls } = host(READY, STARTED, NO_BOARDS)
-  const view = await mount(panel, { host: h })
+  const view = await open({ host: h })
   await view.press({ label: 'Start #159' })
   assert.deepEqual(calls, [{ projectId: PROJECT.id, repo: PROJECT.repo, issue: ISSUE }])
   assert.ok(view.find({ text: 'issue-159-show-the-saved-theme' }))
@@ -210,7 +231,7 @@ test('Start still works after loading without project boards', async () => {
 
 test('Start sends the issue to the worker and shows its worktree and agent', async () => {
   const { host: h, calls } = host(READY)
-  const view = await mount(panel, { host: h })
+  const view = await open({ host: h })
   assert.equal(view.valueOf({ label: 'Web prompt template' }), 'Complete {{issue_url}}')
   assert.ok(view.find({ text: 'ui' }))
 
@@ -226,7 +247,7 @@ test('Start sends the issue to the worker and shows its worktree and agent', asy
 
 test('editing the template saves it for the focused project only', async () => {
   const { host: h } = host(READY)
-  const view = await mount(panel, { host: h })
+  const view = await open({ host: h })
   await view.type({ label: 'Web prompt template' }, 'Work on #{{issue_number}}', { replace: true })
   await new Promise((resolve) => setTimeout(resolve, 800))
   assert.deepEqual(h.data().storage.templates, {
@@ -237,7 +258,7 @@ test('editing the template saves it for the focused project only', async () => {
 })
 
 test('without a GitHub project focused, says so', async () => {
-  const view = await mount(panel, { host: host({ kind: 'no-project' }).host })
+  const view = await open({ host: host({ kind: 'no-project' }).host })
   assert.ok(view.find({ label: 'No GitHub project' }))
   await view.unmount()
 })
@@ -251,7 +272,7 @@ test('a Start that times out but still created the worktree shows it, not an err
       throw new Error('timeout')
     }
   })
-  const view = await mount(panel, { host: h })
+  const view = await open({ host: h })
   await view.press({ label: 'Start #159' })
   assert.ok(view.find({ text: 'issue-159-show-the-saved-theme' }))
   assert.equal(view.find({ text: 'Could not confirm this start. Check Orca worktrees before retrying.' }), null)
@@ -259,7 +280,7 @@ test('a Start that times out but still created the worktree shows it, not an err
 })
 
 test('display fields choose the labels and board fields each card shows', async () => {
-  const view = await mount(panel, { host: host(READY).host })
+  const view = await open({ host: host(READY).host })
   assert.ok(view.find({ text: 'M' }))
   assert.equal(view.find({ text: 'High' }), null)
   await view.toggle({ label: 'Display fields' })
@@ -274,7 +295,7 @@ test('display fields choose the labels and board fields each card shows', async 
 })
 
 test('filters narrow the list, count in the title, and Clear all resets them', async () => {
-  const view = await mount(panel, { host: host(READY).host })
+  const view = await open({ host: host(READY).host })
   await view.toggle({ label: 'Filter' })
   await view.select({ label: 'Assignee' }, '*me')
   assert.equal(view.find({ label: 'Start #62' }), null)
@@ -292,7 +313,7 @@ test('filters narrow the list, count in the title, and Clear all resets them', a
 })
 
 test('reopening shows the selected project cached list at once, never another project list, and a failed refresh says so', async () => {
-  const first = await mount(panel, { host: host(READY).host })
+  const first = await open({ host: host(READY).host })
   const persisted = { plugin: first.persisted.plugin }
   await first.unmount()
   const offline = (project: typeof PROJECT) =>
@@ -305,13 +326,13 @@ test('reopening shows the selected project cached list at once, never another pr
         throw new Error('offline')
       }
     })
-  const same = await mount(panel, { host: offline(PROJECT), persisted })
+  const same = await open({ host: offline(PROJECT), persisted })
   assert.ok(same.find({ label: 'Start #159' }))
   assert.ok(same.find({ text: 'M' }))
   assert.ok(same.find({ text: 'Could not load the issues.' }))
   await same.unmount()
   const other = { id: 'github:acme/docs', repo: 'acme/docs', name: 'Docs' }
-  const switched = await mount(panel, { host: offline(other), persisted })
+  const switched = await open({ host: offline(other), persisted })
   assert.equal(switched.find({ label: 'Start #159' }), null)
   await switched.unmount()
 })
@@ -322,7 +343,7 @@ test('a list cached under the older boards key is not shown', async () => {
       throw new Error('offline')
     }
   })
-  const view = await mount(panel, { host: h, persisted: { plugin: { boards: stored({ [PROJECT.id]: READY }, 2) } } })
+  const view = await open({ host: h, persisted: { plugin: { boards: stored({ [PROJECT.id]: READY }, 2) } } })
   assert.equal(view.find({ label: 'Start #159' }), null)
   assert.ok(view.find({ text: 'Could not load the issues.' }))
   await view.unmount()
@@ -337,7 +358,7 @@ test('the worktree icon and its linked name both open the worktree', async () =>
       return null
     }
   })
-  const view = await mount(panel, { host: h })
+  const view = await open({ host: h })
   await view.press({ label: 'Open issue-159-show-the-saved-theme' })
   await view.press({ text: 'issue-159-show-the-saved-theme' })
   assert.deepEqual(opened, [{ worktreeId: 'repo::/w/issue-159' }, { worktreeId: 'repo::/w/issue-159' }])
