@@ -206,6 +206,58 @@ test('a failed board query leaves the list and its fields intact', async () => {
   await view.unmount()
 })
 
+test('a delayed board answer from the previous repo cannot filter the current repo issues', async () => {
+  const previous = held<BoardFields>()
+  let project = PROJECT
+  let first = true
+  const view = await mount(panel, {
+    host: worker({
+      'project.active': () => project,
+      'issues.load': () => ({ ...READY, project }),
+      'boardFields.load': () => {
+        if (first) {
+          first = false
+          return previous.promise
+        }
+        throw new Error('No board access for the new repo')
+      }
+    }),
+    persisted: { plugin: { filters: stored(SAVED_READY, 2) } }
+  })
+  const loading = view.emit('workspace.changed', { context: null })
+  await until(view, () => view.find({ label: 'Start #159' }))
+  project = { ...PROJECT, repo: 'acme/new-web', name: 'New web' }
+  const refreshed = view.emit('workspace.changed', { context: null })
+  await until(view, () => view.find({ label: 'New web prompt template' }))
+  previous.resolve(BOARDS)
+  await Promise.all([loading, refreshed])
+  assert.ok(view.find({ label: 'Start #159' }))
+  assert.ok(view.find({ label: 'Start #62' }))
+  assert.equal(view.find({ text: 'M' }), null)
+  assert.ok(view.find({ label: 'Filter' }))
+  await view.unmount()
+})
+
+test('board fields still arrive while another refresh of the same project is pending', async () => {
+  const first = held<BoardFields>()
+  const second = held<BoardFields>()
+  let requests = 0
+  const view = await mount(panel, {
+    host: worker({ 'boardFields.load': () => (++requests === 1 ? first.promise : second.promise) })
+  })
+  const loading = view.emit('workspace.changed', { context: null })
+  await until(view, () => view.find({ label: 'Start #159' }))
+  const refreshed = view.emit('workspace.changed', { context: null })
+  await until(view, () => requests === 2)
+  first.resolve(BOARDS)
+  const filling = view.settled()
+  await until(view, () => view.find({ text: 'M' }))
+  second.resolve(NO_BOARDS)
+  await Promise.all([loading, refreshed, filling])
+  assert.equal(view.find({ text: 'M' }), null)
+  await view.unmount()
+})
+
 test('a structured refresh error preserves the selected project cache', async () => {
   const message = 'GitHub could not load the issues: unavailable'
   const view = await open({

@@ -66,7 +66,7 @@ const startKey = (project: ProjectRef, issue: Issue): string => `${project.id}#$
 let saveTimer: ReturnType<typeof setTimeout> | null = null
 let loadSeq = 0
 // The project the shown list and board fields belong to, once the worker has named it.
-let shownProjectId: string | null = null
+let shownProject: ProjectRef | null = null
 // Board answers can land out of order: an older one never replaces a newer one.
 let boardSeq = 0
 let boardApplied = 0
@@ -75,7 +75,7 @@ let pendingSaves = 0
 
 /** Shows the project's cached list and board fields, unless its list is already shown. */
 function showProject(project: ProjectRef | null): void {
-  shownProjectId = project?.id ?? null
+  shownProject = project
   const shown = read(issueList)
   if (project && shown?.kind === 'ready' && shown.project.id === project.id && shown.project.repo === project.repo) {
     return
@@ -138,7 +138,7 @@ async function loadBoardFields(project: ProjectRef): Promise<void> {
   } catch {
     return
   }
-  if (seq <= boardApplied || project.id !== shownProjectId) {
+  if (seq <= boardApplied || project.id !== shownProject?.id || project.repo !== shownProject.repo) {
     return
   }
   boardApplied = seq
@@ -178,7 +178,7 @@ export function setup(ctx: PanelContext): () => void {
   return () => {
     ++loadSeq
     boardApplied = boardSeq
-    shownProjectId = null
+    shownProject = null
     if (saveTimer) {
       void saveTemplates().catch(() => {})
     }
