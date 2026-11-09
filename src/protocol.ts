@@ -9,7 +9,7 @@ export type Templates = { default: string; projects: ProjectTemplate[] }
 export const TEMPLATES_KEY = 'templates'
 export const DEFAULT_TEMPLATES: Templates = { default: 'Complete {{issue_url}}', projects: [] }
 
-/** An open GitHub issue, with its values on the owner's GitHub project boards keyed by field name. */
+/** An open GitHub issue, from the repo alone. */
 export type Issue = {
   number: number
   title: string
@@ -19,7 +19,15 @@ export type Issue = {
   author: string | null
   milestone: string | null
   type: string | null
-  fields: Record<string, string>
+}
+/** What the owner's GitHub project boards add to the issues: optional, loaded after them. */
+export type BoardFields = {
+  /** The boards' own fields, such as Status and Size, in board order. */
+  fields: string[]
+  /** The boards' Status options, in board order. */
+  states: string[]
+  /** Each issue's values on the boards, by issue number and field name. */
+  values: Record<number, Record<string, string>>
 }
 /** The Orca worktree already linked to an issue, and the agent running in it. */
 export type Session = { worktreeId: string; name: string; agent: string | null }
@@ -34,10 +42,6 @@ export type IssueList =
       project: ProjectRef
       issues: Issue[]
       sessions: Record<number, Session>
-      /** The boards' Status options, in board order. */
-      states: string[]
-      /** The boards' own fields, such as Status and Size, in board order. */
-      fields: string[]
       /** The GitHub login `gh` is signed in as, for "Assigned to me". */
       viewer: string | null
     }
@@ -48,6 +52,8 @@ declare module 'orca' {
     'project.active': { output: ProjectRef | null }
     /** The issue list for the project of the focused workspace. */
     'issues.load': { input: { projectId: string }; output: IssueList }
+    /** The repo's GitHub project board fields; rejects when the board query fails. */
+    'boardFields.load': { input: { repo: string }; output: BoardFields }
     /** Creates a worktree for the issue and starts the default agent on the rendered template. */
     'issue.start': { input: { projectId: string; repo: string; issue: Issue }; output: null }
     /** Shows the worktree in Orca. */

@@ -6,7 +6,6 @@ import {
   createArgs,
   BOARDS_QUERY,
   ISSUES_QUERY,
-  NO_BOARDS,
   parseBoards,
   parseRepoIssues,
   sessionsFor,
@@ -42,7 +41,7 @@ test('GraphQL failures and missing repositories do not become an empty issue lis
     assert.throws(() => parseRepoIssues(JSON.stringify(response)))
   }
   assert.deepEqual(parseRepoIssues(JSON.stringify({ data: { repository: { issues: { nodes: [] } } } })), {
-    issues: [], fields: [], states: [], viewer: null
+    issues: [], viewer: null
   })
 })
 
@@ -53,13 +52,13 @@ test('the issues query asks for nothing that needs the read:project scope; board
   }
 })
 
-test('a board query refused for scope fails, so the issues show without board fields', () => {
+test('a board query refused for scope fails on its own, leaving the issues to parse', () => {
   const refused = {
     errors: [{ type: 'INSUFFICIENT_SCOPES', message: "The 'projectsV2' field requires one of the following scopes: ['read:project']" }]
   }
   assert.throws(() => parseBoards(JSON.stringify(refused)))
   const issues = JSON.stringify({ data: { repository: { issues: { nodes: [{ number: 5, title: 'Fix', url: 'u5' }] } } } })
-  assert.deepEqual(parseRepoIssues(issues, NO_BOARDS).issues[0]?.fields, {})
+  assert.equal(parseRepoIssues(issues).issues[0]?.number, 5)
 })
 
 test('a failed load says what to fix', () => {
@@ -161,7 +160,7 @@ test('reads issues with their people, milestone, type and own board fields, and 
       }
     }
   })
-  assert.deepEqual(parseRepoIssues(json, parseBoards(json)), {
+  assert.deepEqual(parseRepoIssues(json), {
     issues: [
       {
         number: 42,
@@ -171,13 +170,15 @@ test('reads issues with their people, milestone, type and own board fields, and 
         assignees: ['octocat'],
         author: 'octocat',
         milestone: 'v1.0',
-        type: 'Task',
-        fields: { Status: 'Ready', Size: 'XS', Estimate: '3' }
+        type: 'Task'
       },
-      { number: 70, title: 'Off the board', url: 'u70', labels: [], assignees: [], author: null, milestone: null, type: null, fields: {} }
+      { number: 70, title: 'Off the board', url: 'u70', labels: [], assignees: [], author: null, milestone: null, type: null }
     ],
-    states: ['Backlog', 'Ready'],
-    fields: ['Status', 'Size', 'Estimate'],
     viewer: 'octocat'
+  })
+  assert.deepEqual(parseBoards(json), {
+    fields: ['Status', 'Size', 'Estimate'],
+    states: ['Backlog', 'Ready'],
+    values: { 7: {}, 42: { Status: 'Ready', Size: 'XS', Estimate: '3' }, 70: {} }
   })
 })

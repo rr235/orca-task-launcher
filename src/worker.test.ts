@@ -34,16 +34,18 @@ const TEMPLATES: Templates = {
   ]
 }
 
-test('issue list loads survive optional failures and report required response failures', async () => {
-  let issues = JSON.stringify({ data: { repository: { issues: { nodes: [{ number: 14, title: 'Fix', url: URL }] } } } })
-  let boardResponse = JSON.stringify({ errors: [{ message: 'read:project scope required' }] })
-  const queries: string[] = []
+type Worker = Awaited<ReturnType<typeof mountWorker>>
+
+/** Runs `body` against the worker with the `orca` and `gh` CLIs stubbed: each GraphQL query is
+ *  recorded with its owner and name, and answered by `answer`. */
+async function withCli(answer: (query: string) => string, body: (worker: Worker, queries: string[][]) => Promise<void>) {
+  const queries: string[][] = []
   const stub = mock.method(childProcess, 'execFile', (_file, args, _options, callback) => {
     const query = args.find((arg: string) => arg.startsWith('query='))?.slice(6)
     let stdout: string
     if (query) {
-      queries.push(query)
-      stdout = query === ISSUES_QUERY ? issues : boardResponse
+      queries.push(args.filter((arg: string) => /^(owner|name)=/.test(arg)).concat(query))
+      stdout = answer(query)
     } else if (args[0] === 'project') {
       stdout = JSON.stringify({ result: { projects: [{ id: 'github:acme/web', displayName: 'Web', providerIdentity: { owner: 'acme', repo: 'web' } }] } })
     } else {
@@ -55,34 +57,75 @@ test('issue list loads survive optional failures and report required response fa
   syncBuiltinESMExports()
   const worker = await mountWorker(main, withTemplates())
   try {
-    const first = await worker.request('issues.load', { projectId: 'github:acme/web' })
-    assert.equal(first.kind, 'ready')
-    if (first.kind === 'ready') {
-      assert.equal(first.issues.length, 1)
-      assert.deepEqual(first.fields, [])
-      assert.deepEqual(first.issues[0]?.fields, {})
-    }
-    assert.ok(queries.includes(ISSUES_QUERY))
-    assert.ok(queries.includes(BOARDS_QUERY))
-    boardResponse = 'invalid JSON'
-    assert.equal((await worker.request('issues.load', { projectId: 'github:acme/web' })).kind, 'ready')
-    for (const response of [
-      { data: { repository: null } },
-      { errors: [{ message: 'Repository access denied' }] }
-    ]) {
-      issues = JSON.stringify(response)
-      const failed = await worker.request('issues.load', { projectId: 'github:acme/web' })
-      assert.equal(failed.kind, 'error')
-      if (failed.kind === 'error') {
-        assert.match(failed.message, /GitHub could not load the issues:/)
-        assert.match(failed.message, /repository issues|Repository access denied/)
-      }
-    }
+    await body(worker, queries)
   } finally {
     await worker.deactivate()
     stub.mock.restore()
     syncBuiltinESMExports()
   }
+}
+
+test('issues load from the repo alone, never waiting on boards, and report required response failures', async () => {
+  let issues = JSON.stringify({ data: { repository: { issues: { nodes: [{ number: 14, title: 'Fix', url: URL }] } } } })
+  await withCli(
+    (query) => (query === ISSUES_QUERY ? issues : JSON.stringify({ errors: [{ message: 'read:project scope required' }] })),
+    async (worker, queries) => {
+      const first = await worker.request('issues.load', { projectId: 'github:acme/web' })
+      assert.equal(first.kind, 'ready')
+      if (first.kind === 'ready') {
+        assert.equal(first.issues.length, 1)
+      }
+      assert.deepEqual(queries, [['owner=acme', 'name=web', ISSUES_QUERY]])
+      for (const response of [{ data: { repository: null } }, { errors: [{ message: 'Repository access denied' }] }]) {
+        issues = JSON.stringify(response)
+        const failed = await worker.request('issues.load', { projectId: 'github:acme/web' })
+        assert.equal(failed.kind, 'error')
+        if (failed.kind === 'error') {
+          assert.match(failed.message, /GitHub could not load the issues:/)
+          assert.match(failed.message, /repository issues|Repository access denied/)
+        }
+      }
+      assert.ok(queries.every((query) => query.at(-1) !== BOARDS_QUERY))
+    }
+  )
+})
+
+test('board fields load on their own request, and a failed board query rejects', async () => {
+  const board = {
+    data: {
+      repository: {
+        issues: {
+          nodes: [
+            {
+              number: 14,
+              projectItems: { nodes: [{ project: { id: 'b1' }, fieldValues: { nodes: [{ name: 'Ready', field: { name: 'Status' } }] } }] }
+            }
+          ]
+        },
+        owner: {
+          projectsV2: {
+            nodes: [{ id: 'b1', closed: false, fields: { nodes: [{ name: 'Status', dataType: 'SINGLE_SELECT' }] }, field: { options: [{ name: 'Ready' }] } }]
+          }
+        }
+      }
+    }
+  }
+  let boardResponse = JSON.stringify(board)
+  await withCli(
+    () => boardResponse,
+    async (worker, queries) => {
+      assert.deepEqual(await worker.request('boardFields.load', { repo: 'acme/web' }), {
+        fields: ['Status'],
+        states: ['Ready'],
+        values: { 14: { Status: 'Ready' } }
+      })
+      assert.deepEqual(queries, [['owner=acme', 'name=web', BOARDS_QUERY]])
+      for (const response of [JSON.stringify({ errors: [{ message: 'read:project scope required' }] }), 'invalid JSON']) {
+        boardResponse = response
+        await assert.rejects(worker.request('boardFields.load', { repo: 'acme/web' }))
+      }
+    }
+  )
 })
 
 test('shell metacharacters in templates stay literal draft text', () => {
