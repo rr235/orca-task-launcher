@@ -312,6 +312,50 @@ test('filters narrow the list, count in the title, and Clear all resets them', a
   await view.unmount()
 })
 
+test('reopening shows the last project cached list with no spinner before the worker names the project', async () => {
+  const first = await open({ host: host(READY).host })
+  const persisted = { plugin: first.persisted.plugin }
+  await first.unmount()
+  const active = held<typeof PROJECT>()
+  const view = await mount(panel, { host: worker({ 'project.active': () => active.promise }), persisted })
+  assert.ok(view.find({ label: 'Start #159' }))
+  assert.ok(view.find({ text: 'M' }))
+  assert.equal(view.find({ label: 'Loading issues' }), null)
+  const loading = view.emit('workspace.changed', { context: null })
+  await new Promise((resolve) => setTimeout(resolve, 20))
+  assert.ok(view.find({ label: 'Start #159' }))
+  assert.equal(view.find({ label: 'Loading issues' }), null)
+  active.resolve(PROJECT)
+  await loading
+  assert.ok(view.find({ label: 'Start #159' }))
+  assert.deepEqual(view.errors, [])
+  await view.unmount()
+})
+
+test('reopening on another project swaps to that project cached list', async () => {
+  const docs = { id: 'github:acme/docs', repo: 'acme/docs', name: 'Docs' }
+  const DOCS: IssueList = { ...READY, project: docs, issues: [{ ...BACKLOG, number: 3, title: 'Docs issue', url: 'u3' }] }
+  const issues = held<IssueList>()
+  const view = await mount(panel, {
+    host: worker({ 'project.active': () => docs, 'issues.load': () => issues.promise, 'boardFields.load': () => NO_BOARDS }),
+    persisted: {
+      plugin: {
+        lastProjectId: PROJECT.id,
+        issueLists: { [PROJECT.id]: { list: READY, boards: BOARDS }, [docs.id]: { list: DOCS, boards: NO_BOARDS } }
+      }
+    }
+  })
+  assert.ok(view.find({ label: 'Start #159' }))
+  const loading = view.emit('workspace.changed', { context: null })
+  await until(view, () => view.find({ label: 'Start #3' }))
+  assert.equal(view.find({ label: 'Start #159' }), null)
+  assert.equal(view.find({ text: 'M' }), null)
+  issues.resolve(DOCS)
+  await loading
+  assert.ok(view.find({ label: 'Start #3' }))
+  await view.unmount()
+})
+
 test('reopening shows the selected project cached list at once, never another project list, and a failed refresh says so', async () => {
   const first = await open({ host: host(READY).host })
   const persisted = { plugin: first.persisted.plugin }

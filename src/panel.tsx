@@ -48,6 +48,8 @@ const NO_FILTERS: Filters = { status: ANY, assignee: ANY, label: ANY, author: AN
 // The last issue list of each project, kept across panel runs: reopening shows the selected project's
 // own list at once while a fresh one loads, never another project's. Its board fields come along.
 const cache = atom<Record<string, CachedList>>('issueLists', {}, { persist: 'plugin' })
+// The project the worker last named as selected: on open, its cached list shows before the worker answers.
+const lastProjectId = atom<string | null>('lastProjectId', null, { persist: 'plugin' })
 const display = atom<Display>('display', { labels: true, fields: ['Size'] }, { persist: 'plugin' })
 const filters = atom<Filters>('filters', NO_FILTERS, { persist: 'plugin', version: 2, migrate: () => NO_FILTERS })
 const sections = atom<Sections>('sections', { template: true, display: false, filter: false }, { persist: 'plugin' })
@@ -75,7 +77,7 @@ let pendingSaves = 0
 function showProject(project: ProjectRef | null): void {
   shownProjectId = project?.id ?? null
   const shown = read(issueList)
-  if (project && shown?.kind === 'ready' && shown.project.id === project.id) {
+  if (project && shown?.kind === 'ready' && shown.project.id === project.id && shown.project.repo === project.repo) {
     return
   }
   const cached = project ? read(cache)[project.id] : undefined
@@ -86,13 +88,15 @@ function showProject(project: ProjectRef | null): void {
 
 async function loadIssues(): Promise<void> {
   const seq = ++loadSeq
-  // The shown list stays until the selected project is known, so a refresh never flashes a spinner.
+  // The shown list, on open the last project's cached one, stays until the selected project is known
+  // and is swapped only when that project differs, so neither opening nor a refresh flashes a spinner.
   let project: ProjectRef | null = null
   try {
     project = await plugin.request('project.active', undefined, { timeoutMs: 15000 })
     if (seq !== loadSeq) {
       return
     }
+    set(lastProjectId, project?.id ?? null)
     if (!project) {
       showProject(null)
       set(issueList, { kind: 'no-project' })
@@ -164,6 +168,13 @@ export function setup(ctx: PanelContext): () => void {
     })
   )
   void loadTemplates()
+  // Opening shows the last project's cached list at once; the first load swaps it if the project differs.
+  const last = read(lastProjectId)
+  const cached = last ? read(cache)[last] : undefined
+  if (cached) {
+    set(issueList, cached.list)
+    set(boards, cached.boards)
+  }
   return () => {
     ++loadSeq
     boardApplied = boardSeq
