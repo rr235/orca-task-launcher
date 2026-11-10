@@ -76,6 +76,15 @@ let boardSeq = 0
 let boardApplied = 0
 let saving: Promise<void> = Promise.resolve()
 let pendingSaves = 0
+// The project the latest load is for (null: none selected, undefined: unknown), and whether a
+// check of the selected project is in flight.
+let loadedProjectId: string | null | undefined
+let checking = false
+
+// Orca sends `workspace.changed` only when the branch, name or terminals differ, so switching
+// between two `main` workspaces sends nothing. While the panel shows, the selected project is
+// checked on this interval too.
+const CHECK_INTERVAL_MS = 2000
 
 /** Shows the project's cached list and board fields, unless its list is already shown. */
 function showProject(project: ProjectRef | null): void {
@@ -101,6 +110,7 @@ async function loadIssues(): Promise<void> {
       return
     }
     set(lastProjectId, project?.id ?? null)
+    loadedProjectId = project?.id ?? null
     if (!project) {
       showProject(null)
       set(issueList, { kind: 'no-project' })
@@ -127,9 +137,28 @@ async function loadIssues(): Promise<void> {
       if (!project) {
         // Without the selected project, the shown list may be another project's.
         showProject(null)
+        loadedProjectId = undefined
       }
       set(panelError, 'Could not load the issues.')
     }
+  }
+}
+
+/** Reloads when the selected project is not the one the latest load is for. */
+export async function checkActiveProject(): Promise<void> {
+  if (checking) {
+    return
+  }
+  checking = true
+  try {
+    const project = await plugin.request('project.active', undefined, { timeoutMs: 15000 })
+    if ((project?.id ?? null) !== loadedProjectId) {
+      void loadIssues()
+    }
+  } catch {
+    // The next check tries again.
+  } finally {
+    checking = false
   }
 }
 
@@ -162,7 +191,14 @@ async function loadTemplates(): Promise<void> {
 }
 
 export function setup(ctx: PanelContext): () => void {
+  loadedProjectId = undefined
+  const check = setInterval(() => {
+    if (read(ctx.visible)) {
+      void checkActiveProject()
+    }
+  }, CHECK_INTERVAL_MS)
   ctx.subscriptions.push(
+    { dispose: () => clearInterval(check) },
     // Orca first delivers the current context to each new subscriber, which makes the first load.
     on('workspace.changed', () => void loadIssues()),
     storage.onDidChange(({ key }) => {
