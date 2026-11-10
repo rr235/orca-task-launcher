@@ -1,0 +1,55 @@
+name: Release
+
+on:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: read
+
+jobs:
+  checks:
+    name: Orca latest
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: 24
+
+      - name: Manifest version matches the tag
+        run: |
+          version="$(node -p "require('./orca-plugin.json').version")"
+          if [ "v$version" != "$GITHUB_REF_NAME" ]; then
+            echo "::error::orca-plugin.json version $version does not match tag $GITHUB_REF_NAME. Ship a new patch version, never retag."
+            exit 1
+          fi
+
+      - name: Install the latest Orca
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release download --repo stablyai/orca --pattern 'orca-ide_*_amd64.deb' --output "$RUNNER_TEMP/orca.deb"
+          sudo apt-get update -qq
+          sudo DEBIAN_FRONTEND=noninteractive apt-get install -y -qq --no-install-recommends "$RUNNER_TEMP/orca.deb"
+          orca-ide --version
+
+      - run: orca-ide plugin validate .
+      - run: orca-ide plugin test .
+      - run: orca-ide plugin check .
+
+  release:
+    needs: checks
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: write
+    steps:
+      - name: Publish the GitHub Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh release create "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" --verify-tag --title "$GITHUB_REF_NAME" --generate-notes

@@ -19,7 +19,7 @@ Merging to `main` ships nothing. The community catalog picks up new `vX.Y.Z` tag
    ```
 
 2. Open a PR titled `chore(release): X.Y.Z` that only bumps `version` in `orca-plugin.json`.
-3. Before merging, run `orca plugin test .`, `orca plugin check .` and `orca plugin validate .`.
+3. Merge once CI passes. It runs `orca plugin validate .`, `test .` and `check .` on the latest Orca and on the minimum in `engines.orca`.
 4. After it merges, tag the merge commit with the same version and push the tag:
 
    ```sh
@@ -27,11 +27,13 @@ Merging to `main` ships nothing. The community catalog picks up new `vX.Y.Z` tag
    git push origin vX.Y.Z
    ```
 
-5. Publish the release notes:
+5. The tag runs the release workflow. It fails unless `version` equals the tag, reruns the checks on the latest Orca, then creates the GitHub Release with generated notes. Replace them with yours:
 
    ```sh
-   gh release create vX.Y.Z --verify-tag --title vX.Y.Z --notes-file <notes.md>
+   gh release edit vX.Y.Z --notes-file <notes.md>
    ```
+
+   If the workflow fails, fix it on `main` and release the next patch version. Never retag.
 
 ## Release notes
 
