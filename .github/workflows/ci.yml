@@ -35,7 +35,7 @@ jobs:
       - name: Install Orca ${{ matrix.orca }}
         env:
           GH_TOKEN: ${{ github.token }}
-          ORCA_TAG: ${{ matrix.orca == 'latest' && '' || matrix.orca }}
+          ORCA_TAG: ${{ matrix.orca != 'latest' && matrix.orca || '' }}
         run: |
           gh release download ${ORCA_TAG:+"$ORCA_TAG"} --repo stablyai/orca --pattern 'orca-ide_*_amd64.deb' --output "$RUNNER_TEMP/orca.deb"
           sudo apt-get update -qq
