@@ -6,8 +6,8 @@ Merging to `main` ships nothing. The community catalog picks up new `vX.Y.Z` tag
 
 - Feature and fix PRs leave `version` in `orca-plugin.json` alone.
 - Choose the next version at release time, from the PRs merged since the last tag:
-  - Minor (0.1.x to 0.2.0) when any of them adds a feature.
-  - Patch (0.2.0 to 0.2.1) when they are all fixes.
+  - Minor (0.1.x to 0.2.0) only when one of them adds a major feature.
+  - Patch (0.2.0 to 0.2.1) for fixes and minor features.
 - An urgent fix can ship on its own as a patch release.
 
 ## Steps
