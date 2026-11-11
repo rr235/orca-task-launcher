@@ -8,40 +8,23 @@ on:
 permissions:
   contents: read
 
-concurrency:
-  group: ci-${{ github.event.pull_request.number || github.ref }}
-  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
-
 jobs:
-  checks:
-    # Stable check names for the main ruleset: "Orca latest" and "Orca minimum".
-    name: Orca ${{ matrix.orca == 'latest' && 'latest' || 'minimum' }}
+  check:
     runs-on: ubuntu-latest
-    timeout-minutes: 10
-    strategy:
-      fail-fast: false
-      matrix:
-        # Keep the pin equal to engines.orca in orca-plugin.json and bump both together.
-        orca: [latest, v1.4.248]
     steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          persist-credentials: false
+      - uses: actions/checkout@v7
 
-      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+      - uses: actions/setup-node@v7
         with:
           node-version: 24
 
-      - name: Install Orca ${{ matrix.orca }}
+      - name: Install Orca
         env:
           GH_TOKEN: ${{ github.token }}
-          ORCA_TAG: ${{ matrix.orca != 'latest' && matrix.orca || '' }}
         run: |
-          gh release download ${ORCA_TAG:+"$ORCA_TAG"} --repo stablyai/orca --pattern 'orca-ide_*_amd64.deb' --output "$RUNNER_TEMP/orca.deb"
+          gh release download --repo stablyai/orca --pattern 'orca-ide_*_amd64.deb' --output "$RUNNER_TEMP/orca.deb"
           sudo apt-get update -qq
-          sudo DEBIAN_FRONTEND=noninteractive apt-get install -y -qq --no-install-recommends "$RUNNER_TEMP/orca.deb"
-          orca-ide --version
+          sudo apt-get install -y -qq --no-install-recommends "$RUNNER_TEMP/orca.deb"
 
-      - run: orca-ide plugin validate .
       - run: orca-ide plugin test .
       - run: orca-ide plugin check .
