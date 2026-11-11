@@ -149,10 +149,11 @@ export async function checkActiveProject(): Promise<void> {
   if (checking) {
     return
   }
+  const seq = loadSeq
   checking = true
   try {
     const project = await plugin.request('project.active', undefined, { timeoutMs: 15000 })
-    if ((project?.id ?? null) !== loadedProjectId) {
+    if (seq === loadSeq && (project?.id ?? null) !== loadedProjectId) {
       void loadIssues()
     }
   } catch {

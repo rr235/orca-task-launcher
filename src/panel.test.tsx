@@ -150,6 +150,21 @@ test('a project switch that sends no workspace event still shows the new project
   await view.unmount()
 })
 
+test('a project check that finishes after closing does not start a new load', async () => {
+  const pending = held<typeof PROJECT | null>()
+  let calls = 0
+  const view = await open({ host: worker({
+    'project.active': () => (++calls === 1 ? PROJECT : pending.promise)
+  }) })
+  const checking = panel.checkActiveProject()
+  await until(view, () => calls === 2)
+  await view.unmount()
+  pending.resolve(null)
+  await checking
+  await new Promise((resolve) => setTimeout(resolve, 20))
+  assert.equal(calls, 2)
+})
+
 test('a failed project lookup hides the previous project issues', async () => {
   let offline = false
   const h = worker({ 'project.active': () => { if (offline) { throw new Error('offline') }; return PROJECT } })
