@@ -19,7 +19,7 @@ Merging to `main` ships nothing. The community catalog picks up new `vX.Y.Z` tag
    ```
 
 2. Open a PR titled `chore(release): X.Y.Z` that only bumps `version` in `orca-plugin.json`.
-3. Before merging, run `orca plugin test .`, `orca plugin check .` and `orca plugin validate .`.
+3. Merge once CI passes. It runs `orca plugin test .` and `orca plugin check .` on the latest Orca.
 4. After it merges, tag the merge commit with the same version and push the tag:
 
    ```sh
