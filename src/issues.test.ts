@@ -9,6 +9,7 @@ import {
   parseBoards,
   parseRepoIssues,
   sessionsFor,
+  tabOfPane,
   worktreeName
 } from './issues'
 
@@ -17,7 +18,15 @@ const list = JSON.stringify({
   result: {
     worktrees: [
       { id: 'repo1::/work/main', projectId: 'github:acme/web', displayName: 'main', linkedIssue: null },
-      { id: ID_42, projectId: 'github:acme/web', displayName: 'issue-42-add-dark-mode', linkedIssue: 42, isArchived: false },
+      {
+        id: ID_42,
+        projectId: 'github:acme/web',
+        displayName: 'issue-42-add-dark-mode',
+        path: '/work/issue-42-add-dark-mode',
+        branch: 'refs/heads/issue-42-add-dark-mode',
+        linkedIssue: 42,
+        isArchived: false
+      },
       { id: 'repo1::/work/old', projectId: 'github:acme/web', linkedIssue: 12, isArchived: true },
       { id: 'repo2::/work/docs-15', projectId: 'github:acme/docs', linkedIssue: 15 }
     ]
@@ -28,7 +37,17 @@ const ps = (activeId: string | null) =>
     result: {
       worktrees: [
         { worktreeId: 'repo1::/work/main', isActive: activeId === 'repo1::/work/main', agents: [] },
-        { worktreeId: ID_42, isActive: activeId === ID_42, agents: [{ agentType: 'codex' }] }
+        {
+          worktreeId: ID_42,
+          isActive: activeId === ID_42,
+          agents: [
+            // A review the main session delegated is listed first and is not the issue's session.
+            { paneKey: 'tab2:leaf2', parentPaneKey: 'structured-agent-session-s1:leaf1', agentType: 'codex', conversationName: 'swe-review #42' },
+            { paneKey: 'structured-agent-session-s1:leaf1', parentPaneKey: null, agentType: 'claude', state: 'working', conversationName: ' Add dark mode toggle ' },
+            { paneKey: 'tab3:leaf3', agentType: 'codex', prompt: 'Complete   https://github.com/acme/web/issues/42' },
+            { paneKey: 'tab4:leaf4', agentType: 'codex', hasLivePty: false, conversationName: 'Closed terminal' }
+          ]
+        }
       ]
     }
   })
@@ -77,10 +96,26 @@ test('the active project is the project of the worktree selected in the sidebar'
   assert.equal(activeProjectId(ps(null), list), null)
 })
 
-test('each live worktree linked to an issue of the project becomes its session', () => {
+test('each live worktree linked to an issue of the project becomes its session, with its branch and open top-level agents', () => {
   assert.deepEqual(sessionsFor('github:acme/web', list, ps(null)), {
-    42: { worktreeId: ID_42, name: 'issue-42-add-dark-mode', agent: 'codex' }
+    42: {
+      worktreeId: ID_42,
+      name: 'issue-42-add-dark-mode',
+      branch: 'issue-42-add-dark-mode',
+      path: '/work/issue-42-add-dark-mode',
+      agents: [
+        { key: 'structured-agent-session-s1:leaf1', title: 'Add dark mode toggle', agent: 'claude', chat: true, working: true },
+        { key: 'tab3:leaf3', title: 'Complete https://github.com/acme/web/issues/42', agent: 'codex', chat: false, working: false }
+      ]
+    }
   })
+})
+
+test('a session pane names the tab Orca focuses', () => {
+  assert.deepEqual(tabOfPane('structured-agent-session-s1:leaf1'), { tabId: 'agent-session:s1' })
+  assert.deepEqual(tabOfPane('tab3:leaf3'), { tabId: 'tab3', leafId: 'leaf3' })
+  assert.equal(tabOfPane('nonsense'), null)
+  assert.equal(tabOfPane('structured-agent-session-a b:leaf'), null)
 })
 
 test('Start creates a top-level worktree linked to the issue, sending the prompt to the agent', () => {

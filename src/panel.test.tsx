@@ -2,7 +2,7 @@
 import { assert, mockHost, mount, stored, test, type MockRequests, type TestPanel } from 'orca/testing'
 import { NO_BOARDS } from './issues'
 import { Spinner, type JsonValue } from 'orca'
-import type { BoardFields, Issue, IssueList } from './protocol'
+import type { BoardFields, Issue, IssueList, ProjectRef, Session } from './protocol'
 import * as panel from './panel'
 
 const PROJECT = { id: 'github:acme/web', repo: 'acme/web', name: 'Web' }
@@ -32,10 +32,16 @@ const BOARDS: BoardFields = {
   states: ['Backlog', 'Ready', 'Done'],
   values: { 159: { Status: 'Ready', Size: 'M', Priority: 'High' }, 62: { Status: 'Backlog', Priority: 'Low' } }
 }
-const STARTED: IssueList = {
-  ...READY,
-  sessions: { 159: { worktreeId: 'repo::/w/issue-159', name: 'issue-159-show-the-saved-theme', agent: 'claude' } }
+const SESSION: Session = {
+  worktreeId: 'repo::/w/issue-159',
+  name: 'issue-159-show-the-saved-theme',
+  branch: 'issue-159-show-the-saved-theme',
+  path: '/w/issue-159',
+  agents: [{ key: 'tab1:leaf1', title: 'Saved theme fix', agent: 'claude', chat: false, working: true }]
 }
+const STARTED: IssueList = { ...READY, sessions: { 159: SESSION } }
+/** The answer to `project.active`. */
+const at = (project: ProjectRef | null, sessions: Record<number, Session> = {}) => ({ project, sessions })
 const SAVED_READY = { status: '=Ready', assignee: '*any', label: '*any', author: '*any', milestone: '*any', type: '*any' }
 const CAPABILITIES = ['storage:own', 'workspace:read']
 
@@ -44,7 +50,7 @@ const worker = (requests: MockRequests = {}, storage?: Record<string, JsonValue>
   mockHost({
     capabilities: CAPABILITIES,
     storage,
-    requests: { 'project.active': () => PROJECT, 'issues.load': () => READY, 'boardFields.load': () => BOARDS, ...requests }
+    requests: { 'project.active': () => at(PROJECT), 'issues.load': () => READY, 'boardFields.load': () => BOARDS, ...requests }
   })
 
 const host = (list: IssueList, started: IssueList = STARTED, boards: BoardFields = BOARDS) => {
@@ -53,7 +59,7 @@ const host = (list: IssueList, started: IssueList = STARTED, boards: BoardFields
   return {
     calls,
     host: worker({
-      'project.active': () => (current.kind === 'ready' ? current.project : null),
+      'project.active': () => (current.kind === 'ready' ? at(current.project, current.sessions) : at(null)),
       'issues.load': () => current,
       'boardFields.load': () => boards,
       'issue.start': (input: unknown) => {
@@ -61,7 +67,10 @@ const host = (list: IssueList, started: IssueList = STARTED, boards: BoardFields
         current = started
         return null
       },
-      'worktree.open': () => null
+      'session.focus': (input: unknown) => {
+        calls.push(input)
+        return null
+      }
     })
   }
 }
@@ -109,7 +118,7 @@ test('Start flushes a template edit before asking the worker to launch', async (
 test('opening the panel loads the issues and board fields once', async () => {
   const counts = { active: 0, issues: 0, boards: 0 }
   const h = worker({
-    'project.active': () => (counts.active++, PROJECT),
+    'project.active': () => (counts.active++, at(PROJECT)),
     'issues.load': () => (counts.issues++, READY),
     'boardFields.load': () => (counts.boards++, BOARDS)
   })
@@ -134,7 +143,7 @@ test('a project switch that sends no workspace event still shows the new project
   const otherList: IssueList = { ...READY, project: OTHER, issues: [{ ...BACKLOG, number: 7, url: 'https://github.com/acme/api/issues/7' }] }
   let active = PROJECT
   const h = worker({
-    'project.active': () => active,
+    'project.active': () => at(active),
     'issues.load': (input: { projectId: string }) => (input.projectId === OTHER.id ? otherList : READY)
   })
   const view = await open({ host: h })
@@ -154,7 +163,7 @@ test('a project check that finishes after closing does not start a new load', as
   const pending = held<typeof PROJECT | null>()
   let calls = 0
   const view = await open({ host: worker({
-    'project.active': () => (++calls === 1 ? PROJECT : pending.promise)
+    'project.active': () => (++calls === 1 ? at(PROJECT) : pending.promise.then(at))
   }) })
   const checking = panel.checkActiveProject()
   await until(view, () => calls === 2)
@@ -167,7 +176,7 @@ test('a project check that finishes after closing does not start a new load', as
 
 test('a failed project lookup hides the previous project issues', async () => {
   let offline = false
-  const h = worker({ 'project.active': () => { if (offline) { throw new Error('offline') }; return PROJECT } })
+  const h = worker({ 'project.active': () => { if (offline) { throw new Error('offline') }; return at(PROJECT) } })
   const view = await open({ host: h })
   assert.ok(view.find({ label: 'Start #159' }))
   offline = true
@@ -250,7 +259,7 @@ test('a delayed board answer from the previous repo cannot filter the current re
   let first = true
   const view = await mount(panel, {
     host: worker({
-      'project.active': () => project,
+      'project.active': () => at(project),
       'issues.load': () => ({ ...READY, project }),
       'boardFields.load': () => {
         if (first) {
@@ -319,7 +328,7 @@ test('Start still works after loading without project boards', async () => {
   await view.unmount()
 })
 
-test('Start sends the issue to the worker and shows its worktree and agent', async () => {
+test('Start sends the issue to the worker and shows its session, worktree and branch', async () => {
   const { host: h, calls } = host(READY)
   const view = await open({ host: h })
   assert.equal(view.valueOf({ label: 'Web prompt template' }), 'Complete {{issue_url}}')
@@ -327,12 +336,30 @@ test('Start sends the issue to the worker and shows its worktree and agent', asy
 
   await view.press({ label: 'Start #159' })
   assert.deepEqual(calls, [{ projectId: PROJECT.id, repo: PROJECT.repo, issue: ISSUE }])
-  assert.ok(view.find({ text: 'issue-159-show-the-saved-theme' }))
-  assert.ok(view.find({ text: 'Claude' }))
+  assert.ok(view.find({ label: 'Show Saved theme fix tab' }))
+  // The branch has the worktree's name, so one line shows both.
+  assert.equal(view.findAll({ text: 'issue-159-show-the-saved-theme' }).length, 1)
   assert.equal(view.find({ label: 'Start #159' }), null)
+
+  await view.press({ label: 'Show Saved theme fix tab' })
+  assert.deepEqual(calls[1], { worktreeId: SESSION.worktreeId, path: SESSION.path, key: 'tab1:leaf1' })
   assert.deepEqual(view.errors, [])
   assert.deepEqual(view.warnings, [])
   await view.unmount()
+})
+
+test('a renamed session shows its new name without a workspace event', async () => {
+  let sessions: Record<number, Session> = { 159: SESSION }
+  const view = await open({
+    host: worker({ 'project.active': () => at(PROJECT, sessions), 'issues.load': () => ({ ...READY, sessions }) })
+  })
+  assert.ok(view.find({ label: 'Show Saved theme fix tab' }))
+  sessions = { 159: { ...SESSION, agents: [{ ...SESSION.agents[0]!, title: 'Theme persistence fix' }] } }
+  await panel.checkActiveProject()
+  await view.settled()
+  const renamed = view.find({ label: 'Show Theme persistence fix tab' })
+  await view.unmount()
+  assert.ok(renamed)
 })
 
 test('editing the template saves it for the focused project only', async () => {
@@ -408,7 +435,7 @@ test('reopening shows the last project cached list and stored template with no s
   await first.unmount()
   const active = held<typeof PROJECT>()
   const saved = { default: 'Complete {{issue_url}}', projects: [{ repo: 'acme/web', name: 'Web', template: 'Review {{issue_url}}' }] }
-  const h = worker({ 'project.active': () => active.promise }, { templates: saved })
+  const h = worker({ 'project.active': () => active.promise.then(at) }, { templates: saved })
   // Records each frame the panel draws, so the first one can be checked, not only the settled one.
   const frames: { type?: unknown }[] = []
   const draw = () => {
@@ -438,7 +465,7 @@ test('reopening on another project swaps to that project cached list', async () 
   const DOCS: IssueList = { ...READY, project: docs, issues: [{ ...BACKLOG, number: 3, title: 'Docs issue', url: 'u3' }] }
   const issues = held<IssueList>()
   const view = await mount(panel, {
-    host: worker({ 'project.active': () => docs, 'issues.load': () => issues.promise, 'boardFields.load': () => NO_BOARDS }),
+    host: worker({ 'project.active': () => at(docs), 'issues.load': () => issues.promise, 'boardFields.load': () => NO_BOARDS }),
     persisted: {
       plugin: {
         lastProjectId: PROJECT.id,
@@ -463,7 +490,7 @@ test('reopening shows the selected project cached list at once, never another pr
   await first.unmount()
   const offline = (project: typeof PROJECT) =>
     worker({
-      'project.active': () => project,
+      'project.active': () => at(project),
       'issues.load': () => {
         throw new Error('offline')
       },
@@ -494,19 +521,18 @@ test('a list cached under the older boards key is not shown', async () => {
   await view.unmount()
 })
 
-test('the worktree icon and its linked name both open the worktree', async () => {
-  const opened: unknown[] = []
-  const h = worker({
-    'issues.load': () => STARTED,
-    'worktree.open': (input: unknown) => {
-      opened.push(input)
-      return null
-    }
+test('a list cached before sessions had agents and a branch still draws its worktree', async () => {
+  const old = { ...READY, sessions: { 159: { worktreeId: 'repo::/w/issue-159', name: 'issue-159-show-the-saved-theme', agent: 'claude' } } }
+  const pending = held<IssueList>()
+  const view = await mount(panel, {
+    host: worker({ 'issues.load': () => pending.promise }),
+    persisted: { plugin: { lastProjectId: PROJECT.id, issueLists: { [PROJECT.id]: { list: old, boards: BOARDS } } } }
   })
-  const view = await open({ host: h })
-  await view.press({ label: 'Open issue-159-show-the-saved-theme' })
-  await view.press({ text: 'issue-159-show-the-saved-theme' })
-  assert.deepEqual(opened, [{ worktreeId: 'repo::/w/issue-159' }, { worktreeId: 'repo::/w/issue-159' }])
-  assert.deepEqual(view.errors, [])
+  const drawn = view.find({ text: 'issue-159-show-the-saved-theme' })
+  const errors = [...view.errors]
+  pending.resolve(READY)
   await view.unmount()
+  assert.ok(drawn)
+  assert.deepEqual(errors, [])
 })
+

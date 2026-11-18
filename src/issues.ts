@@ -1,15 +1,30 @@
 // Pure reads of the `orca` and `gh` CLI output the issue list is built from, and the worktree create
 // command a Start runs. The worker does the I/O; everything here is testable without it.
-import type { BoardFields, Issue, Session } from './protocol'
+import type { AgentSession, BoardFields, Issue, Session } from './protocol'
 
 type WorktreeRow = {
   id?: string
   projectId?: string
   displayName?: string
+  path?: string | null
+  branch?: string | null
   linkedIssue?: number | null
   isArchived?: boolean
 }
-type PsRow = { worktreeId?: string; isActive?: boolean; agents?: { agentType?: string | null }[] }
+type AgentRow = {
+  paneKey?: string | null
+  /** Set on a session another agent started, such as a review it delegated. */
+  parentPaneKey?: string | null
+  agentType?: string | null
+  /** `working` while the agent is mid-turn; also `blocked`, `waiting` or `done`. */
+  state?: string | null
+  hasLivePty?: boolean
+  conversationName?: string | null
+  taskTitle?: string | null
+  displayName?: string | null
+  prompt?: string | null
+}
+type PsRow = { worktreeId?: string; isActive?: boolean; agents?: AgentRow[] }
 
 const worktreeRows = (listJson: string): WorktreeRow[] =>
   (JSON.parse(listJson) as { result?: { worktrees?: WorktreeRow[] } }).result?.worktrees ?? []
@@ -25,22 +40,69 @@ export function activeProjectId(psJson: string, listJson: string): string | null
   return worktreeRows(listJson).find((row) => row.id === active)?.projectId ?? null
 }
 
-/** The live worktree linked to each issue of the project, with the agent running in it. */
+// A chat session's pane key; a terminal's is `<tabId>:<leafId>`.
+const CHAT_PANE = 'structured-agent-session-'
+
+/** A session's name as Orca's sidebar shows it: its conversation name, else its task or the start of its prompt. */
+function titleOf(agent: AgentRow, worktree: string): string {
+  const prompt = agent.prompt?.replace(/\s+/g, ' ').trim()
+  return (
+    agent.conversationName?.trim() ||
+    agent.taskTitle?.trim() ||
+    agent.displayName?.trim() ||
+    (prompt ? (prompt.length > 60 ? `${prompt.slice(0, 59)}…` : prompt) : '') ||
+    worktree
+  )
+}
+
+/** The worktree's top-level agent sessions whose terminal or chat is still open. */
+function agentSessions(agents: AgentRow[], worktree: string): AgentSession[] {
+  return agents
+    .filter((a): a is AgentRow & { paneKey: string } => Boolean(a.paneKey) && !a.parentPaneKey && a.hasLivePty !== false)
+    .map((a) => ({
+      key: a.paneKey,
+      title: titleOf(a, worktree),
+      agent: a.agentType ?? null,
+      chat: a.paneKey.startsWith(CHAT_PANE),
+      working: a.state === 'working'
+    }))
+}
+
+/** The live worktree linked to each issue of the project, its branch and the agent sessions in it. */
 export function sessionsFor(projectId: string, listJson: string, psJson: string): Record<number, Session> {
-  const agents = new Map(psRows(psJson).map((row) => [row.worktreeId, row.agents?.[0]?.agentType ?? null]))
+  const agents = new Map(psRows(psJson).map((row) => [row.worktreeId, row.agents ?? []]))
   const sessions: Record<number, Session> = {}
   for (const row of worktreeRows(listJson)) {
     if (row.projectId !== projectId || row.isArchived || !row.linkedIssue || !row.id) {
       continue
     }
+    const name = row.displayName ?? `issue-${row.linkedIssue}`
     sessions[row.linkedIssue] = {
       worktreeId: row.id,
-      name: row.displayName ?? `issue-${row.linkedIssue}`,
-      agent: agents.get(row.id) ?? null
+      name,
+      branch: row.branch ? row.branch.replace(/^refs\/heads\//, '') : null,
+      path: row.path ?? null,
+      agents: agentSessions(agents.get(row.id) ?? [], name)
     }
   }
   return sessions
 }
+
+/** The tab Orca's runtime knows a pane by: `agent-session:<id>` for a chat, else the terminal's tab and leaf. */
+export function tabOfPane(paneKey: string): { tabId: string; leafId?: string } | null {
+  if (paneKey.startsWith(CHAT_PANE)) {
+    const id = paneKey.slice(CHAT_PANE.length).split(':')[0] ?? ''
+    return /^[A-Za-z0-9_-]+$/.test(id) ? { tabId: `agent-session:${id}` } : null
+  }
+  const [tabId, leafId] = paneKey.split(':')
+  return tabId && leafId ? { tabId, leafId } : null
+}
+
+// Agent icons shipped in assets/agents/, by Orca's agent type.
+const AGENT_ICONS = new Set(['claude', 'codex'])
+
+/** The agent's icon file, or null for an agent without one. */
+export const agentIcon = (agent: string | null): string | null => (agent && AGENT_ICONS.has(agent) ? `assets/agents/${agent}.png` : null)
 
 // The issues come from the repo alone. Project boards are optional and load separately: BOARDS_QUERY
 // needs the `read:project` scope and boards to exist, and the issues never wait on it.

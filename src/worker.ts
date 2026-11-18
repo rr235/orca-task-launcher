@@ -15,6 +15,7 @@ import {
   sessionsFor
 } from './issues'
 import { run } from './cli'
+import { focusTab } from './focus'
 import { listProjects } from './projects'
 import { TEMPLATES_KEY, type BoardFields, type Issue, type IssueList, type ProjectRef } from './protocol'
 import { applyIssueTemplate, parseIssueLaunch, pickTemplate, readTemplates, renderTemplate } from './rewrite'
@@ -124,7 +125,11 @@ export default function activate(orca: OrcaWorkerApi): void {
     return null
   }
 
-  orca.panels.handle('project.active', async () => (await activeProject()).project)
+  // The panel checks this every few seconds, so it also carries the sessions: their names change as agents work.
+  orca.panels.handle('project.active', async () => {
+    const { project, psJson, listJson } = await activeProject()
+    return { project, sessions: project ? sessionsFor(project.id, listJson, psJson) : {} }
+  })
   orca.panels.handle('issues.load', loadIssues)
   orca.panels.handle('boardFields.load', loadBoardFields)
   orca.panels.handle('issue.start', (input) => {
@@ -137,8 +142,13 @@ export default function activate(orca: OrcaWorkerApi): void {
     starts.set(key, pending)
     return pending
   })
-  orca.panels.handle('worktree.open', async ({ worktreeId }) => {
+  orca.panels.handle('session.focus', async ({ worktreeId, path, key }) => {
+    // Orca focuses a tab only in the workspace on screen, so the worktree shows first and stays shown
+    // when the tab cannot be focused.
     await run('orca', ['worktree', 'activate', '--worktree', `id:${worktreeId}`, '--json'])
+    if (path) {
+      await focusTab(path, key).catch((error: Error) => log(`session.focus ${key}: ${error.message}`))
+    }
     return null
   })
 

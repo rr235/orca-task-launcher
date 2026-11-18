@@ -11,8 +11,12 @@ import {
   Code,
   Collapsible,
   EmptyState,
+  env,
   IconButton,
+  Image,
   Link,
+  List,
+  ListItem,
   on,
   plugin,
   read,
@@ -28,8 +32,8 @@ import {
   type JsonValue,
   type PanelContext
 } from 'orca'
-import { agentLabel, NO_BOARDS } from './issues'
-import { TEMPLATES_KEY, type BoardFields, type Issue, type IssueList, type ProjectRef, type Templates } from './protocol'
+import { agentIcon, agentLabel, NO_BOARDS } from './issues'
+import { TEMPLATES_KEY, type AgentSession, type BoardFields, type Issue, type IssueList, type ProjectRef, type Session, type Templates } from './protocol'
 import { readTemplates } from './rewrite'
 
 const SAVE_DELAY_MS = 600
@@ -48,6 +52,7 @@ const NO_FILTERS: Filters = { status: ANY, assignee: ANY, label: ANY, author: AN
 
 // The last issue list of each project, kept across panel runs: reopening shows the selected project's
 // own list at once while a fresh one loads, never another project's. Its board fields come along.
+// A list cached by an older version has sessions without `agents` or `branch`: IssueCard allows for them.
 const cache = atom<Record<string, CachedList>>('issueLists', {}, { persist: 'plugin' })
 // The project the worker last named as selected: on open, its cached list shows before the worker answers.
 const lastProjectId = atom<string | null>('lastProjectId', null, { persist: 'plugin' })
@@ -105,7 +110,7 @@ async function loadIssues(): Promise<void> {
   // and is swapped only when that project differs, so neither opening nor a refresh flashes a spinner.
   let project: ProjectRef | null = null
   try {
-    project = await plugin.request('project.active', undefined, { timeoutMs: 15000 })
+    project = (await plugin.request('project.active', undefined, { timeoutMs: 15000 })).project
     if (seq !== loadSeq) {
       return
     }
@@ -144,7 +149,7 @@ async function loadIssues(): Promise<void> {
   }
 }
 
-/** Reloads when the selected project is not the one the latest load is for. */
+/** Reloads when the selected project is not the one the latest load is for, else refreshes its sessions. */
 export async function checkActiveProject(): Promise<void> {
   if (checking) {
     return
@@ -152,9 +157,20 @@ export async function checkActiveProject(): Promise<void> {
   const seq = loadSeq
   checking = true
   try {
-    const project = await plugin.request('project.active', undefined, { timeoutMs: 15000 })
-    if (seq === loadSeq && (project?.id ?? null) !== loadedProjectId) {
+    const { project, sessions } = await plugin.request('project.active', undefined, { timeoutMs: 15000 })
+    if (seq !== loadSeq) {
+      return
+    }
+    if ((project?.id ?? null) !== loadedProjectId) {
       void loadIssues()
+      return
+    }
+    // Agents rename their sessions as they work, which sends no workspace event.
+    const shown = read(issueList)
+    if (project && shown?.kind === 'ready' && shown.project.id === project.id && JSON.stringify(shown.sessions) !== JSON.stringify(sessions)) {
+      const next = { ...shown, sessions }
+      set(issueList, next)
+      update(cache, (all) => ({ ...all, [project.id]: { list: next, boards: read(boards) } }))
     }
   } catch {
     // The next check tries again.
@@ -299,8 +315,10 @@ async function start(project: ProjectRef, issue: Issue): Promise<void> {
   update(starting, ({ [key]: _, ...rest }) => rest)
 }
 
-function openWorktree(worktreeId: string): void {
-  void plugin.request('worktree.open', { worktreeId }).catch(() => set(panelError, 'Could not open the worktree.'))
+function openSession(session: Session, agent: AgentSession): void {
+  void plugin
+    .request('session.focus', { worktreeId: session.worktreeId, path: session.path ?? null, key: agent.key })
+    .catch(() => set(panelError, 'Could not open the session.'))
 }
 
 function setFilter(key: keyof Filters, value: string): void {
@@ -358,6 +376,89 @@ function pill(text: string) {
   )
 }
 
+// Icon sizes in pixels: an agent beside a session's name, and a detail icon beside its worktree or branch.
+const AGENT_ICON_PX = 14
+const DETAIL_ICON_PX = 12
+// The slot a working session's dot sits in, kept on every row.
+const DOT_PX = 16
+
+function Icon({ src, alt, px }: { src: string; alt: string; px: number }) {
+  return (
+    <Box width={px} minWidth={px} shrink={false}>
+      <Image src={src} alt={alt} size="xs" />
+    </Box>
+  )
+}
+
+/**
+ * An agent session as Orca's sidebar shows it: the agent's icon and the session's name, which opens it,
+ * then a button that shows its tab (terminal, or chat for a chat). The button sits beside the ListItem,
+ * which cannot hold other controls.
+ */
+function SessionLine({ session, agent }: { session: Session; agent: AgentSession }) {
+  const icon = agentIcon(agent.agent)
+  const open = () => openSession(session, agent)
+  const label = `Show ${agent.title} tab`
+  return (
+    <Box direction="row" align="center" gap="none" minWidth={0}>
+      <Box grow minWidth={0}>
+        <List>
+          <ListItem onPress={open}>
+            <Box direction="row" align="center" gap="xs" minWidth={0}>
+              {icon ? <Icon src={icon} alt={agentLabel(agent.agent ?? 'agent')} px={AGENT_ICON_PX} /> : null}
+              <Box grow minWidth={0}>
+                <Text size="sm" truncate>
+                  {agent.title}
+                </Text>
+              </Box>
+              {/* Every row keeps the dot's slot, so names end at the same place; only a working session has a dot. */}
+              <Box direction="row" align="center" justify="center" width={DOT_PX} minWidth={DOT_PX} shrink={false}>
+                {agent.working ? (
+                  <Text size="xs" tone="success">
+                    ●
+                  </Text>
+                ) : null}
+              </Box>
+            </Box>
+          </ListItem>
+        </List>
+      </Box>
+      {agent.chat ? (
+        // Orca's IconButton has no chat icon, so a chat's button is a PNG drawn like the terminal button.
+        <Box shrink={false}>
+          <List>
+            <ListItem onPress={open}>
+              <Icon src={`assets/details/chat-tab-${env.theme.colorScheme}.png`} alt={label} px={24} />
+            </ListItem>
+          </List>
+        </Box>
+      ) : (
+        <Box paddingX="sm" shrink={false}>
+          <IconButton icon="terminal" label={label} tooltip={label} size="xs" variant="solid" tone="success" onPress={open} />
+        </Box>
+      )}
+    </Box>
+  )
+}
+
+/** The worktree or branch of an issue's session, or both when they share a name, muted under its agent sessions. */
+const DETAIL_ALT = { worktree: 'Worktree', branch: 'Branch' } as const
+
+function DetailLine({ icons, text }: { icons: (keyof typeof DETAIL_ALT)[]; text: string }) {
+  return (
+    <Box direction="row" align="center" gap="xs" minWidth={0} paddingX="sm">
+      {icons.map((icon) => (
+        <Icon src={`assets/details/${icon}-${env.theme.colorScheme}.png`} alt={DETAIL_ALT[icon]} px={DETAIL_ICON_PX} />
+      ))}
+      <Box grow minWidth={0}>
+        <Text size="xs" muted truncate>
+          {text}
+        </Text>
+      </Box>
+    </Box>
+  )
+}
+
 function IssueCard({ project, issue, shown }: { project: ProjectRef; issue: Issue; shown: string[] }) {
   const ready = read(issueList)
   const session = ready?.kind === 'ready' ? ready.sessions[issue.number] : undefined
@@ -375,9 +476,7 @@ function IssueCard({ project, issue, shown }: { project: ProjectRef; issue: Issu
             {read(display).labels ? issue.labels.map((label) => <Badge tone="neutral">{label}</Badge>) : null}
             {shown.map((field) => (values[field] ? pill(values[field]) : null))}
           </Row>
-          {session ? null : busy ? (
-            <Spinner label={`Starting #${issue.number}`} labelHidden />
-          ) : (
+          {session || busy ? null : (
             <IconButton
               size="xs"
               variant="solid"
@@ -390,21 +489,26 @@ function IssueCard({ project, issue, shown }: { project: ProjectRef; issue: Issu
           )}
         </Row>
         {session ? (
-          <Row justify="between" align="center" gap="xs" wrap>
-            <Row gap="xs" align="center">
-              <IconButton
-                size="xs"
-                variant="ghost"
-                icon="branch"
-                label={`Open ${session.name}`}
-                tooltip={`Open ${session.name}`}
-                onPress={() => openWorktree(session.worktreeId)}
-              />
-              <Text size="sm">
-                <Link onPress={() => openWorktree(session.worktreeId)}>{session.name}</Link>
-              </Text>
-            </Row>
-            {session.agent ? <Badge tone="success">{agentLabel(session.agent)}</Badge> : null}
+          <Stack gap="none">
+            {(session.agents ?? []).map((agent) => (
+              <SessionLine session={session} agent={agent} />
+            ))}
+            {/* A branch named like its worktree shares the worktree's line. */}
+            {session.branch === session.name ? (
+              <DetailLine icons={['worktree', 'branch']} text={session.name} />
+            ) : (
+              <>
+                <DetailLine icons={['worktree']} text={session.name} />
+                {session.branch ? <DetailLine icons={['branch']} text={session.branch} /> : null}
+              </>
+            )}
+          </Stack>
+        ) : busy ? (
+          <Row gap="xs" align="center">
+            <Spinner label={`Starting #${issue.number}`} labelHidden />
+            <Text size="sm" muted>
+              Starting
+            </Text>
           </Row>
         ) : null}
         {error ? (

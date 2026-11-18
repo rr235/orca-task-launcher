@@ -31,8 +31,20 @@ const DEMO: IssueList = {
   project: PROJECT,
   issues: ROWS.map(issue),
   sessions: {
-    48: { worktreeId: 'demo::/w/issue-48', name: 'issue-48-add-a-dark-mode', agent: 'claude' },
-    47: { worktreeId: 'demo::/w/issue-47', name: 'issue-47-cache-search-results-for', agent: 'codex' }
+    48: {
+      worktreeId: 'demo::/w/issue-48',
+      name: 'issue-48-add-a-dark-mode',
+      branch: 'issue-48-add-a-dark-mode',
+      path: '/w/issue-48',
+      agents: [{ key: 'tab48:leaf48', title: 'Add dark mode toggle to settings page', agent: 'claude', chat: false, working: true }]
+    },
+    47: {
+      worktreeId: 'demo::/w/issue-47',
+      name: 'issue-47-cache-search-results-for',
+      branch: 'issue-47-cache-search-results-for',
+      path: '/w/issue-47',
+      agents: [{ key: 'structured-agent-session-s47:leaf47', title: 'Cache repeat search queries', agent: 'codex', chat: true, working: false }]
+    }
   },
   viewer: 'octocat'
 }
@@ -51,11 +63,11 @@ export default defineCheck({
     // Orca first delivers the current context to each new subscriber, which makes the first load.
     events: [{ event: 'workspace.changed', payload: { context: null } }],
     requests: {
-      'project.active': () => PROJECT,
+      'project.active': () => ({ project: PROJECT, sessions: DEMO.kind === 'ready' ? DEMO.sessions : {} }),
       'issues.load': () => DEMO,
       'boardFields.load': () => BOARDS,
       'issue.start': () => null,
-      'worktree.open': () => null
+      'session.focus': () => null
     }
   }
 })

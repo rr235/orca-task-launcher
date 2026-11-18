@@ -29,8 +29,10 @@ export type BoardFields = {
   /** Each issue's values on the boards, by issue number and field name. */
   values: Record<number, Record<string, string>>
 }
-/** The Orca worktree already linked to an issue, and the agent running in it. */
-export type Session = { worktreeId: string; name: string; agent: string | null }
+/** A top-level agent session: `key` is its Orca pane, `title` its name as Orca shows it, `chat` whether it runs in a chat tab, `working` whether the agent is mid-turn. */
+export type AgentSession = { key: string; title: string; agent: string | null; chat: boolean; working: boolean }
+/** The Orca worktree already linked to an issue, its branch, and the agent sessions running in it. */
+export type Session = { worktreeId: string; name: string; branch: string | null; path: string | null; agents: AgentSession[] }
 
 /** What the panel shows: the focused workspace's project, its open issues and their worktrees. */
 export type IssueList =
@@ -48,15 +50,15 @@ export type IssueList =
 
 declare module 'orca' {
   interface PluginRequests {
-    /** The project of the worktree selected in the sidebar, fast: no GitHub call. */
-    'project.active': { output: ProjectRef | null }
+    /** The project of the worktree selected in the sidebar and its issues' sessions, fast: no GitHub call. */
+    'project.active': { output: { project: ProjectRef | null; sessions: Record<number, Session> } }
     /** The issue list for the project of the focused workspace. */
     'issues.load': { input: { projectId: string }; output: IssueList }
     /** The repo's GitHub project board fields; rejects when the board query fails. */
     'boardFields.load': { input: { repo: string }; output: BoardFields }
     /** Creates a worktree for the issue and starts the default agent on the rendered template. */
     'issue.start': { input: { projectId: string; repo: string; issue: Issue }; output: null }
-    /** Shows the worktree in Orca. */
-    'worktree.open': { input: { worktreeId: string }; output: null }
+    /** Shows the worktree, then brings the session's tab to the front where Orca allows it. */
+    'session.focus': { input: { worktreeId: string; path: string | null; key: string }; output: null }
   }
 }

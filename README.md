@@ -12,7 +12,7 @@ give your agent a prompt, and start working in a dedicated branch and worktree.
 - **Make prompts your own.** Save a separate prompt template for each project to guide how your agent approaches the work.
 - **Use your prompt from Tasks too.** Starting an issue from Orca’s Tasks view fills the agent’s input with your template, ready to edit.
 - **Find what matters.** Filter by assignee, label, milestone, author, or issue type, and by status when you use GitHub Projects.
-- **Keep track of progress.** See linked worktrees and running agents, and jump back into ongoing work.
+- **Keep track of progress.** See each started issue’s agent sessions by name, with their worktree and branch, and jump straight back into a session.
 - **Bring in GitHub Projects.** Choose which available board fields appear alongside your issues.
 
 ## Get started
@@ -68,6 +68,8 @@ Task Launcher runs code on your machine, so Orca asks you to approve it. It:
 
 - reads issues and board fields with `gh`, signed in as you
 - creates and opens worktrees with the Orca CLI (`orca-ide` on Linux)
+- on macOS, brings a session’s tab to the front through the runtime client inside Orca’s CLI,
+  which is not a published Orca API (if it fails, the session’s worktree still opens)
 - reads your default agent from Orca’s settings
 - fills in your template when an agent starts from the Tasks view (not on Windows)
 
