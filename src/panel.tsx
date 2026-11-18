@@ -451,7 +451,7 @@ function DetailLine({ icons, text }: { icons: (keyof typeof DETAIL_ALT)[]; text:
         <Icon src={`assets/details/${icon}-${env.theme.colorScheme}.png`} alt={DETAIL_ALT[icon]} px={DETAIL_ICON_PX} />
       ))}
       <Box grow minWidth={0}>
-        <Text size="xs" muted truncate>
+        <Text size="sm" muted truncate>
           {text}
         </Text>
       </Box>
