@@ -383,9 +383,9 @@ test('editing the template saves it for the focused project only', async () => {
   await view.unmount()
 })
 
-test('without a GitHub project focused, says so', async () => {
+test('without a GitHub repository focused, says so', async () => {
   const view = await open({ host: host({ kind: 'no-project' }).host })
-  assert.ok(view.find({ label: 'No GitHub project' }))
+  assert.ok(view.find({ label: 'No GitHub repository' }))
   await view.unmount()
 })
 

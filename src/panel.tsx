@@ -667,8 +667,8 @@ function PanelBody() {
   if (current.kind !== 'ready') {
     return (
       <EmptyState
-        title="No GitHub project"
-        description="Select a workspace of a GitHub-backed project in the sidebar."
+        title="No GitHub repository"
+        description="Select a workspace with a GitHub repository to see the issues."
         icon="branch"
       />
     )
