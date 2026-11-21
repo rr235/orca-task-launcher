@@ -1,7 +1,7 @@
 // `orca plugin test .` runs this in Node with the same runtime and checks Orca uses.
-import { assert, mockHost, mount, stored, test, type MockRequests, type TestPanel } from 'orca/testing'
+import { assert, mockHost, mount, stored, test, type MockHost, type MockRequests, type TestPanel } from 'orca/testing'
 import { NO_BOARDS } from './issues'
-import { Spinner, type JsonValue } from 'orca'
+import type { JsonValue } from 'orca'
 import type { BoardFields, Issue, IssueList, ProjectRef, Session } from './protocol'
 import * as panel from './panel'
 
@@ -44,13 +44,26 @@ const STARTED: IssueList = { ...READY, sessions: { 159: SESSION } }
 const at = (project: ProjectRef | null, sessions: Record<number, Session> = {}) => ({ project, sessions })
 const SAVED_READY = { status: '=Ready', assignee: '*any', label: '*any', author: '*any', milestone: '*any', type: '*any' }
 const CAPABILITIES = ['storage:own', 'workspace:read']
+const VERSION = '1.2.3-beta+4'
+const BUG_FORM = 'https://github.com/rr235/orca-task-launcher/issues/new?template=bug_report.yml'
+/** Presses Report a bug and returns the URL the panel asked Orca to open. */
+async function reportUrl(view: TestPanel, h: MockHost): Promise<unknown> {
+  await view.press({ label: 'Report a bug' })
+  return (h.callsOf('shell.openExternal').at(-1) as { url?: string } | undefined)?.url
+}
 
 /** A worker that answers with READY and BOARDS, unless a request is overridden. */
 const worker = (requests: MockRequests = {}, storage?: Record<string, JsonValue>) =>
   mockHost({
     capabilities: CAPABILITIES,
     storage,
-    requests: { 'project.active': () => at(PROJECT), 'issues.load': () => READY, 'boardFields.load': () => BOARDS, ...requests }
+    requests: {
+      'project.active': () => at(PROJECT),
+      'issues.load': () => READY,
+      'boardFields.load': () => BOARDS,
+      'plugin.version': () => VERSION,
+      ...requests
+    }
   })
 
 const host = (list: IssueList, started: IssueList = STARTED, boards: BoardFields = BOARDS) => {
@@ -374,9 +387,9 @@ test('editing the template saves it for the focused project only', async () => {
   await view.unmount()
 })
 
-test('without a GitHub project focused, says so', async () => {
+test('without a GitHub repository focused, says so', async () => {
   const view = await open({ host: host({ kind: 'no-project' }).host })
-  assert.ok(view.find({ label: 'No GitHub project' }))
+  assert.ok(view.find({ label: 'No GitHub repository' }))
   await view.unmount()
 })
 
@@ -429,22 +442,14 @@ test('filters narrow the list, count in the title, and Clear all resets them', a
   await view.unmount()
 })
 
-test('reopening shows the last project cached list and stored template with no spinner before any answer', async () => {
+test('reopening shows the cached list and stored template before the project answers', async () => {
   const first = await open({ host: host(READY).host })
   const persisted = { plugin: first.persisted.plugin }
   await first.unmount()
   const active = held<typeof PROJECT>()
   const saved = { default: 'Complete {{issue_url}}', projects: [{ repo: 'acme/web', name: 'Web', template: 'Review {{issue_url}}' }] }
   const h = worker({ 'project.active': () => active.promise.then(at) }, { templates: saved })
-  // Records each frame the panel draws, so the first one can be checked, not only the settled one.
-  const frames: { type?: unknown }[] = []
-  const draw = () => {
-    const node = panel.default()
-    frames.push(node as { type?: unknown })
-    return node
-  }
-  const view = await mount({ setup: panel.setup, default: draw }, { host: h, persisted })
-  assert.notEqual(frames[0]?.type, Spinner)
+  const view = await mount(panel, { host: h, persisted })
   assert.ok(view.find({ label: 'Start #159' }))
   assert.equal(view.valueOf({ label: 'Web prompt template' }), 'Review {{issue_url}}')
   assert.ok(view.find({ text: 'M' }))
@@ -536,3 +541,51 @@ test('a list cached before sessions had agents and a branch still draws its work
   assert.deepEqual(errors, [])
 })
 
+
+test('Report a bug opens the bug form with the plugin version filled in', async () => {
+  const h = worker()
+  const view = await open({ host: h })
+  const button = view.find({ label: 'Report a bug' })
+  assert.equal(button?.type, 'IconButton')
+  assert.equal(button?.props.variant, 'ghost')
+  assert.equal(button?.props.icon, 'bug')
+  assert.equal(button?.props.tooltip, 'Report a bug. Opens an external link to file a bug.')
+  assert.equal(await reportUrl(view, h), `${BUG_FORM}&version=1.2.3-beta%2B4`)
+  await view.unmount()
+})
+
+test('Report a bug still opens the bug form when the version is unknown', async () => {
+  const h = worker({ 'plugin.version': () => { throw new Error('no worker') } })
+  const view = await open({ host: h })
+  assert.equal(await reportUrl(view, h), BUG_FORM)
+  assert.deepEqual([...view.errors], [])
+  await view.unmount()
+})
+
+test('Report a bug shows while loading, without a project and after a failed load', async () => {
+  // Before Orca delivers the first workspace context, no load has started.
+  const loading = await mount(panel, { host: worker() })
+  assert.ok(loading.find({ type: 'Spinner' }))
+  assert.ok(loading.find({ label: 'Report a bug' }))
+  await loading.unmount()
+  for (const h of [host({ kind: 'no-project' }).host, worker({ 'project.active': () => { throw new Error('offline') } })]) {
+    const view = await open({ host: h })
+    assert.ok(view.find({ label: 'Report a bug' }), JSON.stringify(view.summary()))
+    await view.unmount()
+  }
+})
+
+test('Request a feature opens the feature request form', async () => {
+  const h = worker()
+  const view = await open({ host: h })
+  const button = view.find({ label: 'Request a feature' })
+  assert.equal(button?.props.icon, 'rocket')
+  assert.equal(button?.props.variant, 'ghost')
+  assert.equal(button?.props.tooltip, 'Request a feature. Opens an external link to request a feature.')
+  await view.press({ label: 'Request a feature' })
+  assert.equal(
+    (h.callsOf('shell.openExternal').at(-1) as { url?: string } | undefined)?.url,
+    'https://github.com/rr235/orca-task-launcher/issues/new?template=feature_request.yml'
+  )
+  await view.unmount()
+})

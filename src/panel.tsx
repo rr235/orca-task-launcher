@@ -23,6 +23,7 @@ import {
   Row,
   Select,
   set,
+  shell,
   Spinner,
   Stack,
   storage,
@@ -71,6 +72,17 @@ const storedTemplates = atom<JsonValue>(TEMPLATES_KEY, null, { persist: 'storage
 const starting = atom<Record<string, boolean>>({})
 const startErrors = atom<Record<string, string>>({})
 const startKey = (project: ProjectRef, issue: Issue): string => `${project.id}#${issue.number}`
+// This run's version from the worker, never persisted: an update must not show the old one.
+const pluginVersion = atom<string | null>(null)
+
+const NEW_ISSUE = 'https://github.com/rr235/orca-task-launcher/issues/new'
+const BUG_FORM = `${NEW_ISSUE}?template=bug_report.yml`
+const FEATURE_FORM = `${NEW_ISSUE}?template=feature_request.yml`
+
+/** The bug report form, with the plugin version filled in when it is known. */
+export function bugReportUrl(version: string | null): string {
+  return version ? `${BUG_FORM}&version=${encodeURIComponent(version)}` : BUG_FORM
+}
 
 let saveTimer: ReturnType<typeof setTimeout> | null = null
 let loadSeq = 0
@@ -225,6 +237,11 @@ export function setup(ctx: PanelContext): () => void {
     })
   )
   set(templates, readTemplates(read(storedTemplates)))
+  // Without an answer the link still opens the form, with the version left for the reporter.
+  void plugin.request('plugin.version', undefined, { timeoutMs: 15000 }).then(
+    (version) => set(pluginVersion, version),
+    () => {}
+  )
   // Opening shows the last project's cached list at once; the first load swaps it if the project differs.
   const last = read(lastProjectId)
   const cached = last ? read(cache)[last] : undefined
@@ -611,7 +628,42 @@ function FilterControls({ current, board, applied }: { current: ReadyIssueList; 
   )
 }
 
+// Pinned below the scrolling content in every state, a failed load included.
+function Feedback() {
+  return (
+    <Row justify="end" gap="xs">
+      <IconButton
+        icon="rocket"
+        label="Request a feature"
+        tooltip="Request a feature. Opens an external link to request a feature."
+        variant="ghost"
+        size="xs"
+        onPress={() => void shell.openExternal(FEATURE_FORM)}
+      />
+      <IconButton
+        icon="bug"
+        label="Report a bug"
+        tooltip="Report a bug. Opens an external link to file a bug."
+        variant="ghost"
+        size="xs"
+        onPress={() => void shell.openExternal(bugReportUrl(read(pluginVersion)))}
+      />
+    </Row>
+  )
+}
+
 export default function Panel() {
+  return (
+    <Box height="100%" gap="sm">
+      <Box grow scroll="y">
+        <PanelBody />
+      </Box>
+      <Feedback />
+    </Box>
+  )
+}
+
+function PanelBody() {
   const current = read(issueList)
   const problem = read(panelError)
   if (problem && !current) {
@@ -633,8 +685,8 @@ export default function Panel() {
   if (current.kind !== 'ready') {
     return (
       <EmptyState
-        title="No GitHub project"
-        description="Select a workspace of a GitHub-backed project in the sidebar."
+        title="No GitHub repository"
+        description="Select a workspace with a GitHub repository to see the issues."
         icon="branch"
       />
     )

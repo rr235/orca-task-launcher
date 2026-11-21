@@ -60,5 +60,7 @@ declare module 'orca' {
     'issue.start': { input: { projectId: string; repo: string; issue: Issue }; output: null }
     /** Shows the worktree, then brings the session's tab to the front where Orca allows it. */
     'session.focus': { input: { worktreeId: string; path: string | null; key: string }; output: null }
+    /** The plugin's version from its manifest; null when it cannot be read. */
+    'plugin.version': { output: string | null }
   }
 }
