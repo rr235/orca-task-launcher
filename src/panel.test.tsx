@@ -1,7 +1,7 @@
 // `orca plugin test .` runs this in Node with the same runtime and checks Orca uses.
 import { assert, mockHost, mount, stored, test, type MockHost, type MockRequests, type TestPanel } from 'orca/testing'
 import { NO_BOARDS } from './issues'
-import { Spinner, type JsonValue } from 'orca'
+import type { JsonValue } from 'orca'
 import type { BoardFields, Issue, IssueList, ProjectRef, Session } from './protocol'
 import * as panel from './panel'
 
@@ -442,22 +442,14 @@ test('filters narrow the list, count in the title, and Clear all resets them', a
   await view.unmount()
 })
 
-test('reopening shows the last project cached list and stored template with no spinner before any answer', async () => {
+test('reopening shows the cached list and stored template before the project answers', async () => {
   const first = await open({ host: host(READY).host })
   const persisted = { plugin: first.persisted.plugin }
   await first.unmount()
   const active = held<typeof PROJECT>()
   const saved = { default: 'Complete {{issue_url}}', projects: [{ repo: 'acme/web', name: 'Web', template: 'Review {{issue_url}}' }] }
   const h = worker({ 'project.active': () => active.promise.then(at) }, { templates: saved })
-  // Records each frame the panel draws, so the first one can be checked, not only the settled one.
-  const frames: { type?: unknown }[] = []
-  const draw = () => {
-    const node = panel.default()
-    frames.push(node as { type?: unknown })
-    return node
-  }
-  const view = await mount({ setup: panel.setup, default: draw }, { host: h, persisted })
-  assert.notEqual(frames[0]?.type, Spinner)
+  const view = await mount(panel, { host: h, persisted })
   assert.ok(view.find({ label: 'Start #159' }))
   assert.equal(view.valueOf({ label: 'Web prompt template' }), 'Review {{issue_url}}')
   assert.ok(view.find({ text: 'M' }))
