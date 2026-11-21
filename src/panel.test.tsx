@@ -1,5 +1,5 @@
 // `orca plugin test .` runs this in Node with the same runtime and checks Orca uses.
-import { assert, mockHost, mount, stored, test, type MockRequests, type TestPanel } from 'orca/testing'
+import { assert, mockHost, mount, stored, test, type MockHost, type MockRequests, type TestPanel } from 'orca/testing'
 import { NO_BOARDS } from './issues'
 import { Spinner, type JsonValue } from 'orca'
 import type { BoardFields, Issue, IssueList, ProjectRef, Session } from './protocol'
@@ -46,7 +46,11 @@ const SAVED_READY = { status: '=Ready', assignee: '*any', label: '*any', author:
 const CAPABILITIES = ['storage:own', 'workspace:read']
 const VERSION = '1.2.3-beta+4'
 const BUG_FORM = 'https://github.com/rr235/orca-task-launcher/issues/new?template=bug_report.yml'
-const reportLink = (view: TestPanel) => view.find({ type: 'Link', text: 'Report a bug' })?.props.href
+/** Presses Report a bug and returns the URL the panel asked Orca to open. */
+async function reportUrl(view: TestPanel, h: MockHost): Promise<unknown> {
+  await view.press({ label: 'Report a bug' })
+  return (h.callsOf('shell.openExternal').at(-1) as { url?: string } | undefined)?.url
+}
 
 /** A worker that answers with READY and BOARDS, unless a request is overridden. */
 const worker = (requests: MockRequests = {}, storage?: Record<string, JsonValue>) =>
@@ -547,14 +551,21 @@ test('a list cached before sessions had agents and a branch still draws its work
 
 
 test('Report a bug opens the bug form with the plugin version filled in', async () => {
-  const view = await open({ host: worker() })
-  await until(view, () => reportLink(view) === `${BUG_FORM}&version=1.2.3-beta%2B4`)
+  const h = worker()
+  const view = await open({ host: h })
+  const button = view.find({ label: 'Report a bug' })
+  assert.equal(button?.type, 'IconButton')
+  assert.equal(button?.props.variant, 'ghost')
+  assert.equal(button?.props.icon, 'bug')
+  assert.equal(button?.props.tooltip, 'Report a bug. Opens an external link to file a bug.')
+  assert.equal(await reportUrl(view, h), `${BUG_FORM}&version=1.2.3-beta%2B4`)
   await view.unmount()
 })
 
 test('Report a bug still opens the bug form when the version is unknown', async () => {
-  const view = await open({ host: worker({ 'plugin.version': () => { throw new Error('no worker') } }) })
-  assert.equal(reportLink(view), BUG_FORM)
+  const h = worker({ 'plugin.version': () => { throw new Error('no worker') } })
+  const view = await open({ host: h })
+  assert.equal(await reportUrl(view, h), BUG_FORM)
   assert.deepEqual([...view.errors], [])
   await view.unmount()
 })
@@ -563,11 +574,26 @@ test('Report a bug shows while loading, without a project and after a failed loa
   // Before Orca delivers the first workspace context, no load has started.
   const loading = await mount(panel, { host: worker() })
   assert.ok(loading.find({ type: 'Spinner' }))
-  assert.ok(reportLink(loading))
+  assert.ok(loading.find({ label: 'Report a bug' }))
   await loading.unmount()
   for (const h of [host({ kind: 'no-project' }).host, worker({ 'project.active': () => { throw new Error('offline') } })]) {
     const view = await open({ host: h })
-    assert.ok(reportLink(view), JSON.stringify(view.summary()))
+    assert.ok(view.find({ label: 'Report a bug' }), JSON.stringify(view.summary()))
     await view.unmount()
   }
+})
+
+test('Request a feature opens the feature request form', async () => {
+  const h = worker()
+  const view = await open({ host: h })
+  const button = view.find({ label: 'Request a feature' })
+  assert.equal(button?.props.icon, 'rocket')
+  assert.equal(button?.props.variant, 'ghost')
+  assert.equal(button?.props.tooltip, 'Request a feature. Opens an external link to request a feature.')
+  await view.press({ label: 'Request a feature' })
+  assert.equal(
+    (h.callsOf('shell.openExternal').at(-1) as { url?: string } | undefined)?.url,
+    'https://github.com/rr235/orca-task-launcher/issues/new?template=feature_request.yml'
+  )
+  await view.unmount()
 })

@@ -23,6 +23,7 @@ import {
   Row,
   Select,
   set,
+  shell,
   Spinner,
   Stack,
   storage,
@@ -74,7 +75,9 @@ const startKey = (project: ProjectRef, issue: Issue): string => `${project.id}#$
 // This run's version from the worker, never persisted: an update must not show the old one.
 const pluginVersion = atom<string | null>(null)
 
-const BUG_FORM = 'https://github.com/rr235/orca-task-launcher/issues/new?template=bug_report.yml'
+const NEW_ISSUE = 'https://github.com/rr235/orca-task-launcher/issues/new'
+const BUG_FORM = `${NEW_ISSUE}?template=bug_report.yml`
+const FEATURE_FORM = `${NEW_ISSUE}?template=feature_request.yml`
 
 /** The bug report form, with the plugin version filled in when it is known. */
 export function bugReportUrl(version: string | null): string {
@@ -625,23 +628,38 @@ function FilterControls({ current, board, applied }: { current: ReadyIssueList; 
   )
 }
 
-// Shown in every state, a failed load included.
-function ReportBug() {
+// Pinned below the scrolling content in every state, a failed load included.
+function Feedback() {
   return (
-    <Row justify="end">
-      <Text size="sm">
-        <Link href={bugReportUrl(read(pluginVersion))}>Report a bug</Link>
-      </Text>
+    <Row justify="end" gap="xs">
+      <IconButton
+        icon="rocket"
+        label="Request a feature"
+        tooltip="Request a feature. Opens an external link to request a feature."
+        variant="ghost"
+        size="xs"
+        onPress={() => void shell.openExternal(FEATURE_FORM)}
+      />
+      <IconButton
+        icon="bug"
+        label="Report a bug"
+        tooltip="Report a bug. Opens an external link to file a bug."
+        variant="ghost"
+        size="xs"
+        onPress={() => void shell.openExternal(bugReportUrl(read(pluginVersion)))}
+      />
     </Row>
   )
 }
 
 export default function Panel() {
   return (
-    <Stack gap="md">
-      <PanelBody />
-      <ReportBug />
-    </Stack>
+    <Box height="100%" gap="sm">
+      <Box grow scroll="y">
+        <PanelBody />
+      </Box>
+      <Feedback />
+    </Box>
   )
 }
 
