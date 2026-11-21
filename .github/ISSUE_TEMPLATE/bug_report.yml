@@ -1,0 +1,57 @@
+name: Bug report
+description: Something in Task Launcher does not work as expected.
+labels: ["bug", "needs-triage"]
+body:
+  - type: input
+    id: version
+    attributes:
+      label: Plugin version
+      description: "Run `orca plugin list` (`orca-ide plugin list` on Linux) and copy the version next to `rr235.task-launcher`."
+      placeholder: "0.2.0"
+    validations:
+      required: true
+  - type: input
+    id: orca-version
+    attributes:
+      label: Orca version
+      description: "Run `orca --version` (`orca-ide --version` on Linux)."
+      placeholder: "1.4.248"
+    validations:
+      required: true
+  - type: input
+    id: os
+    attributes:
+      label: Operating system
+      placeholder: "macOS 15.1"
+    validations:
+      required: true
+  - type: textarea
+    id: steps
+    attributes:
+      label: Steps to reproduce
+      placeholder: |
+        1. Open the Task Launcher panel
+        2. Start an issue
+        3. ...
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: Expected behaviour
+    validations:
+      required: true
+  - type: textarea
+    id: actual
+    attributes:
+      label: Actual behaviour
+    validations:
+      required: true
+  - type: textarea
+    id: logs
+    attributes:
+      label: Logs
+      description: Any errors from the panel or Orca's developer console. They show as a code block, so no backticks are needed.
+      render: shell
+    validations:
+      required: false
