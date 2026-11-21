@@ -558,9 +558,6 @@ function DisplayFields({ boardFields }: { boardFields: string[] }) {
 // How far an xs icon button's glyph sits inside its control slot, in pixels: descriptions start under the arrow.
 const ICON_INSET_PX = 7
 
-// Extra space below the last section, in pixels, so the issue list starts clearly apart from it.
-const SECTIONS_BOTTOM_PX = 12
-
 // A section header like Power Sessions': an arrow that points right when closed and down when open,
 // then the section's icon and neutral title, and while open a one-line description above the content.
 // A ListItem has one icon slot, so the arrow is its own button beside it, and only the arrow opens and closes.
@@ -819,8 +816,6 @@ function PanelBody() {
         </Section>
         <Separator />
       </Stack>
-      {/* Extra room between the last section and the issue list, on top of the column's gap. */}
-      <Box height={SECTIONS_BOTTOM_PX} shrink={false} />
       {problem ? (
         <Row justify="between" align="center" gap="xs" wrap>
           <Text size="sm" tone="danger">
