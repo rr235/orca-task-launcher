@@ -9,8 +9,8 @@ import {
   Button,
   Checkbox,
   Code,
-  Collapsible,
   EmptyState,
+  Grid,
   env,
   IconButton,
   Image,
@@ -22,6 +22,7 @@ import {
   read,
   Row,
   Select,
+  Separator,
   set,
   shell,
   Spinner,
@@ -31,7 +32,10 @@ import {
   Textarea,
   update,
   type JsonValue,
-  type PanelContext
+  type IconName,
+  type OrcaNode,
+  type PanelContext,
+  type SelectProps
 } from 'orca'
 import { agentIcon, agentLabel, NO_BOARDS } from './issues'
 import { TEMPLATES_KEY, type AgentSession, type BoardFields, type Issue, type IssueList, type ProjectRef, type Session, type Templates } from './protocol'
@@ -541,17 +545,90 @@ function IssueCard({ project, issue, shown }: { project: ProjectRef; issue: Issu
 function DisplayFields({ boardFields }: { boardFields: string[] }) {
   const d = read(display)
   return (
-    <Stack gap="sm">
+    <Grid columns={2} gap="sm">
       <Checkbox label="Labels" checked={d.labels} onChange={(checked) => update(display, (v) => ({ ...v, labels: checked }))} />
-      {boardFields.length ? (
-        <Text size="sm" muted>
-          Board fields
-        </Text>
-      ) : null}
+      {/* Board fields, when the project has a board, are listed like Labels: no heading of their own. */}
       {boardFields.map((field) => (
         <Checkbox label={field} checked={d.fields.includes(field)} onChange={(checked) => toggleField(field, checked, boardFields)} />
       ))}
-    </Stack>
+    </Grid>
+  )
+}
+
+// How far an xs icon button's glyph sits inside its control slot, in pixels: descriptions start under the arrow.
+const ICON_INSET_PX = 7
+
+// A section header like Power Sessions': an arrow that points right when closed and down when open,
+// then the section's icon and neutral title, and while open a one-line description above the content.
+// A ListItem has one icon slot, so the arrow is its own button beside it, and only the arrow opens and closes.
+function Section({
+  title,
+  icon,
+  description,
+  open,
+  onToggle,
+  children
+}: {
+  title: string
+  icon: IconName
+  description: string
+  open: boolean
+  onToggle: () => void
+  children?: OrcaNode
+}) {
+  return (
+    <Box shrink={false} gap="none">
+      <Box direction="row" align="center" gap="none" minWidth={0}>
+        <Box shrink={false}>
+          <IconButton icon={open ? 'expand' : 'next'} label={`${open ? 'Close' : 'Open'} ${title}`} size="xs" variant="ghost" onPress={onToggle} />
+        </Box>
+        <Box grow minWidth={0}>
+          <List>
+            <ListItem icon={icon}>
+              <Text weight="medium" tone="neutral">
+                {title}
+              </Text>
+            </ListItem>
+          </List>
+        </Box>
+      </Box>
+      {open ? <SectionBody description={description}>{children}</SectionBody> : null}
+    </Box>
+  )
+}
+
+// A one-line description, then the content, inset by the arrow button's glyph inset so both start
+// under a section's arrow.
+function SectionBody({ description, children }: { description: string; children?: OrcaNode }) {
+  return (
+    <Box direction="row" gap="none" shrink={false}>
+      <Box width={ICON_INSET_PX} minWidth={ICON_INSET_PX} shrink={false} />
+      <Box grow minWidth={0}>
+        <Stack gap="md">
+          <Text size="sm" muted>
+            {description}
+          </Text>
+          {children}
+        </Stack>
+      </Box>
+    </Box>
+  )
+}
+
+// Width of the label column, so every filter's dropdown starts at the same edge.
+const FILTER_LABEL_PX = 96
+
+// A filter dropdown on one row with its label in front, instead of the label stacked above it.
+function FilterSelect(props: Omit<SelectProps, 'labelHidden'>) {
+  return (
+    <Box direction="row" align="center" gap="sm" minWidth={0}>
+      <Box width={FILTER_LABEL_PX} minWidth={FILTER_LABEL_PX} shrink={false}>
+        <Text size="sm">{props.label}</Text>
+      </Box>
+      <Box grow minWidth={0}>
+        <Select {...props} labelHidden />
+      </Box>
+    </Box>
   )
 }
 
@@ -563,7 +640,7 @@ function FilterControls({ current, board, applied }: { current: ReadyIssueList; 
   return (
     <Stack gap="sm">
       {hasStatus(board) ? (
-        <Select
+        <FilterSelect
           label="Status"
           value={f.status}
           onChange={(v) => setFilter('status', v)}
@@ -575,7 +652,7 @@ function FilterControls({ current, board, applied }: { current: ReadyIssueList; 
           )}
         />
       ) : null}
-      <Select
+      <FilterSelect
         label="Assignee"
         value={f.assignee}
         onChange={(v) => setFilter('assignee', v)}
@@ -589,19 +666,19 @@ function FilterControls({ current, board, applied }: { current: ReadyIssueList; 
           f.assignee
         )}
       />
-      <Select
+      <FilterSelect
         label="Label"
         value={f.label}
         onChange={(v) => setFilter('label', v)}
         options={options([{ value: ANY, label: 'Any label' }], issues.flatMap((i) => i.labels), f.label)}
       />
-      <Select
+      <FilterSelect
         label="Author"
         value={f.author}
         onChange={(v) => setFilter('author', v)}
         options={options([{ value: ANY, label: 'Anyone' }], issues.map((i) => i.author), f.author)}
       />
-      <Select
+      <FilterSelect
         label="Milestone"
         value={f.milestone}
         onChange={(v) => setFilter('milestone', v)}
@@ -611,7 +688,7 @@ function FilterControls({ current, board, applied }: { current: ReadyIssueList; 
           f.milestone
         )}
       />
-      <Select
+      <FilterSelect
         label="Issue type"
         value={f.type}
         onChange={(v) => setFilter('type', v)}
@@ -698,29 +775,47 @@ function PanelBody() {
   const visible = issues.filter((issue) => matches(issue, valuesOf(board, issue), f, current.viewer))
   const shown = board.fields.filter((field) => read(display).fields.includes(field))
   const open = read(sections)
-  const toggle = (key: keyof Sections) => (value: boolean) => update(sections, (s) => ({ ...s, [key]: value }))
+  const toggle = (key: keyof Sections) => () => update(sections, (s) => ({ ...s, [key]: !s[key] }))
   return (
     <Stack gap="md">
-      <Collapsible title="Prompt template" open={open.template} onChange={toggle('template')}>
-        <Stack gap="xs">
-          <Textarea
-            label={`${project.name} prompt template`}
-            labelHidden
-            rows={rowsFor(templateOf(all, project))}
-            value={templateOf(all, project)}
-            onChange={(value) => editTemplate(project, value)}
-          />
-          <Text size="sm" muted>
-            Variables: <Code>{'{{issue_url}}'}</Code> <Code>{'{{issue_number}}'}</Code> <Code>{'{{repo}}'}</Code>
-          </Text>
-        </Stack>
-      </Collapsible>
-      <Collapsible title="Display fields" open={open.display} onChange={toggle('display')}>
-        <DisplayFields boardFields={board.fields} />
-      </Collapsible>
-      <Collapsible title={applied ? `Filter (${applied})` : 'Filter'} open={open.filter} onChange={toggle('filter')}>
-        <FilterControls current={current} board={board} applied={applied} />
-      </Collapsible>
+      {/* The sections sit a wider gap apart than the rest of the column, as in Power Sessions. */}
+      <Stack gap="lg">
+        <Section
+          title="Prompt template"
+          icon="bot"
+          description="Initial prompt for the coding agent."
+          open={open.template}
+          onToggle={toggle('template')}
+        >
+          <Stack gap="md">
+            <Textarea
+              label={`${project.name} prompt template`}
+              labelHidden
+              rows={rowsFor(templateOf(all, project))}
+              value={templateOf(all, project)}
+              onChange={(value) => editTemplate(project, value)}
+            />
+            <Text size="sm" muted>
+              Variables: <Code>{'{{issue_url}}'}</Code> <Code>{'{{issue_number}}'}</Code> <Code>{'{{repo}}'}</Code>
+            </Text>
+          </Stack>
+        </Section>
+        <Separator />
+        <Section title="Display fields" icon="layers" description="Fields to be shown inside the issue list below." open={open.display} onToggle={toggle('display')}>
+          <DisplayFields boardFields={board.fields} />
+        </Section>
+        <Separator />
+        <Section
+          title={applied ? `Filter (${applied})` : 'Filter'}
+          icon="filter"
+          description="Narrow the issue list below."
+          open={open.filter}
+          onToggle={toggle('filter')}
+        >
+          <FilterControls current={current} board={board} applied={applied} />
+        </Section>
+        <Separator />
+      </Stack>
       {problem ? (
         <Row justify="between" align="center" gap="xs" wrap>
           <Text size="sm" tone="danger">
