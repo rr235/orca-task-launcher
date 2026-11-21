@@ -5,6 +5,11 @@ import type { JsonValue } from 'orca'
 import type { BoardFields, Issue, IssueList, ProjectRef, Session } from './protocol'
 import * as panel from './panel'
 
+// A section header, by its exact title.
+const section = (title: string) => ({ type: 'ListItem', text: title }) as const
+// A section's arrow, which opens and closes it, by the section's title.
+const arrow = (title: string) => ({ type: 'IconButton', label: new RegExp(`^(Open|Close) ${title}$`) }) as const
+
 const PROJECT = { id: 'github:acme/web', repo: 'acme/web', name: 'Web' }
 const ISSUE: Issue = {
   number: 159,
@@ -144,7 +149,7 @@ test('opening the panel loads the issues and board fields once', async () => {
 test('a GitHub label that matches a control sentinel remains filterable', async () => {
   const sentinelList: IssueList = { ...READY, issues: [{ ...ISSUE, labels: ['*any'] }, BACKLOG] }
   const view = await open({ host: worker({ 'issues.load': () => sentinelList }) })
-  await view.toggle({ label: 'Filter' })
+  await view.press(arrow('Filter'))
   await view.select({ label: 'Label' }, '=*any')
   assert.ok(view.find({ label: 'Start #159' }))
   assert.equal(view.find({ label: 'Start #62' }), null)
@@ -210,7 +215,7 @@ test('without boards, every issue shows, with no Status filter, even one saved e
   const view = await open({ host: host(READY, STARTED, NO_BOARDS).host, persisted: { plugin: { filters: stored(SAVED_READY, 2) } } })
   assert.ok(view.find({ label: 'Start #159' }))
   assert.ok(view.find({ label: 'Start #62' }))
-  await view.toggle({ label: 'Filter' })
+  await view.press(arrow('Filter'))
   assert.equal(view.find({ label: 'Status' }), null)
   assert.ok(view.find({ label: 'Label' }))
   await view.unmount()
@@ -224,13 +229,13 @@ test('an answer with no boards replaces cached board filters, and returning fiel
   })
   assert.ok(view.find({ label: 'Start #159' }))
   assert.ok(view.find({ label: 'Start #62' }))
-  assert.ok(view.find({ label: 'Filter' }))
+  assert.ok(view.find(section('Filter')))
   assert.equal(view.find({ text: 'M' }), null)
   boards = BOARDS
   await view.emit('workspace.changed', { context: null })
   assert.ok(view.find({ label: 'Start #159' }))
   assert.equal(view.find({ label: 'Start #62' }), null)
-  assert.ok(view.find({ label: 'Filter (1)' }))
+  assert.ok(view.find(section('Filter (1)')))
   await view.unmount()
 })
 
@@ -294,7 +299,7 @@ test('a delayed board answer from the previous repo cannot filter the current re
   assert.ok(view.find({ label: 'Start #159' }))
   assert.ok(view.find({ label: 'Start #62' }))
   assert.equal(view.find({ text: 'M' }), null)
-  assert.ok(view.find({ label: 'Filter' }))
+  assert.ok(view.find(section('Filter')))
   await view.unmount()
 })
 
@@ -409,11 +414,25 @@ test('a Start that times out but still created the worktree shows it, not an err
   await view.unmount()
 })
 
+test('a section shows its description and content only while open', async () => {
+  const view = await open({ host: host(READY).host })
+  const description = { type: 'Text', text: 'Fields to be shown inside the issue list below.' } as const
+  const checkbox = { type: 'Checkbox', label: 'Labels' } as const
+  assert.equal(view.find(description), null)
+  await view.press({ type: 'IconButton', label: 'Open Display fields' })
+  assert.ok(view.find(description))
+  assert.ok(view.find(checkbox))
+  await view.press({ type: 'IconButton', label: 'Close Display fields' })
+  assert.equal(view.find(description), null)
+  assert.equal(view.find(checkbox), null)
+  await view.unmount()
+})
+
 test('display fields choose the labels and board fields each card shows', async () => {
   const view = await open({ host: host(READY).host })
   assert.ok(view.find({ text: 'M' }))
   assert.equal(view.find({ text: 'High' }), null)
-  await view.toggle({ label: 'Display fields' })
+  await view.press(arrow('Display fields'))
   await view.toggle({ label: 'Priority' })
   await view.toggle({ label: 'Size' })
   await view.toggle({ label: 'Labels' })
@@ -426,16 +445,16 @@ test('display fields choose the labels and board fields each card shows', async 
 
 test('filters narrow the list, count in the title, and Clear all resets them', async () => {
   const view = await open({ host: host(READY).host })
-  await view.toggle({ label: 'Filter' })
+  await view.press(arrow('Filter'))
   await view.select({ label: 'Assignee' }, '*me')
   assert.equal(view.find({ label: 'Start #62' }), null)
   assert.ok(view.find({ label: 'Start #159' }))
   await view.select({ label: 'Issue type' }, '=Feature')
   assert.ok(view.find({ text: 'No issues match these filters.' }))
-  assert.ok(view.find({ label: 'Filter (2)' }))
+  assert.ok(view.find(section('Filter (2)')))
   await view.press({ text: 'Clear all' })
   assert.ok(view.find({ label: 'Start #62' }))
-  assert.ok(view.find({ label: 'Filter' }))
+  assert.ok(view.find(section('Filter')))
   await view.select({ label: 'Milestone' }, '*none')
   assert.equal(view.find({ label: 'Start #159' }), null)
   assert.deepEqual(view.errors, [])
