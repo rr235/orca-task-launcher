@@ -67,7 +67,8 @@ export default defineCheck({
       'issues.load': () => DEMO,
       'boardFields.load': () => BOARDS,
       'issue.start': () => null,
-      'session.focus': () => null
+      'session.focus': () => null,
+      'plugin.version': () => null
     }
   }
 })

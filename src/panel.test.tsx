@@ -44,13 +44,22 @@ const STARTED: IssueList = { ...READY, sessions: { 159: SESSION } }
 const at = (project: ProjectRef | null, sessions: Record<number, Session> = {}) => ({ project, sessions })
 const SAVED_READY = { status: '=Ready', assignee: '*any', label: '*any', author: '*any', milestone: '*any', type: '*any' }
 const CAPABILITIES = ['storage:own', 'workspace:read']
+const VERSION = '1.2.3-beta+4'
+const BUG_FORM = 'https://github.com/rr235/orca-task-launcher/issues/new?template=bug_report.yml'
+const reportLink = (view: TestPanel) => view.find({ type: 'Link', text: 'Report a bug' })?.props.href
 
 /** A worker that answers with READY and BOARDS, unless a request is overridden. */
 const worker = (requests: MockRequests = {}, storage?: Record<string, JsonValue>) =>
   mockHost({
     capabilities: CAPABILITIES,
     storage,
-    requests: { 'project.active': () => at(PROJECT), 'issues.load': () => READY, 'boardFields.load': () => BOARDS, ...requests }
+    requests: {
+      'project.active': () => at(PROJECT),
+      'issues.load': () => READY,
+      'boardFields.load': () => BOARDS,
+      'plugin.version': () => VERSION,
+      ...requests
+    }
   })
 
 const host = (list: IssueList, started: IssueList = STARTED, boards: BoardFields = BOARDS) => {
@@ -536,3 +545,29 @@ test('a list cached before sessions had agents and a branch still draws its work
   assert.deepEqual(errors, [])
 })
 
+
+test('Report a bug opens the bug form with the plugin version filled in', async () => {
+  const view = await open({ host: worker() })
+  await until(view, () => reportLink(view) === `${BUG_FORM}&version=1.2.3-beta%2B4`)
+  await view.unmount()
+})
+
+test('Report a bug still opens the bug form when the version is unknown', async () => {
+  const view = await open({ host: worker({ 'plugin.version': () => { throw new Error('no worker') } }) })
+  assert.equal(reportLink(view), BUG_FORM)
+  assert.deepEqual([...view.errors], [])
+  await view.unmount()
+})
+
+test('Report a bug shows while loading, without a project and after a failed load', async () => {
+  // Before Orca delivers the first workspace context, no load has started.
+  const loading = await mount(panel, { host: worker() })
+  assert.ok(loading.find({ type: 'Spinner' }))
+  assert.ok(reportLink(loading))
+  await loading.unmount()
+  for (const h of [host({ kind: 'no-project' }).host, worker({ 'project.active': () => { throw new Error('offline') } })]) {
+    const view = await open({ host: h })
+    assert.ok(reportLink(view), JSON.stringify(view.summary()))
+    await view.unmount()
+  }
+})

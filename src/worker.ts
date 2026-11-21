@@ -16,6 +16,7 @@ import {
 } from './issues'
 import { run } from './cli'
 import { focusTab } from './focus'
+import { readPluginVersion } from './manifest'
 import { listProjects } from './projects'
 import { TEMPLATES_KEY, type BoardFields, type Issue, type IssueList, type ProjectRef } from './protocol'
 import { applyIssueTemplate, parseIssueLaunch, pickTemplate, readTemplates, renderTemplate } from './rewrite'
@@ -151,6 +152,7 @@ export default function activate(orca: OrcaWorkerApi): void {
     }
     return null
   })
+  orca.panels.handle('plugin.version', () => readPluginVersion(log))
 
   orca.hooks.on('agent.launch.before', async (event, next) => {
     if (process.platform === 'win32' || !parseIssueLaunch(event.command)) {

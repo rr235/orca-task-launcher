@@ -1,6 +1,8 @@
 // Runs the hook as Orca would, with this worker as the only plugin in the chain.
 import { assert, mockHost, mountWorker, test } from 'orca/testing'
 import { execFileSync } from 'node:child_process'
+import { readFileSync } from 'node:fs'
+import { readPluginVersion } from './manifest'
 import { parseProjectList } from './projects'
 import { TEMPLATES_KEY, type Templates } from './protocol'
 import { applyIssueTemplate, readTemplates } from './rewrite'
@@ -98,4 +100,16 @@ test('reads GitHub-backed projects from orca project list output', () => {
     }
   })
   assert.deepEqual(parseProjectList(json), [{ id: 'github:acme/web', repo: 'acme/web', name: 'Web' }])
+})
+
+test('plugin.version answers with the manifest version', async () => {
+  const worker = await mountWorker(main, withTemplates())
+  const manifest = JSON.parse(readFileSync(new globalThis.URL('../orca-plugin.json', import.meta.url), 'utf8')) as { version: string }
+  assert.equal(await worker.request('plugin.version'), manifest.version)
+})
+
+test('an unreadable manifest gives no version and logs why', async () => {
+  const logs: string[] = []
+  assert.equal(await readPluginVersion((m) => logs.push(m), new globalThis.URL('./missing.json', import.meta.url)), null)
+  assert.match(logs[0], /could not read the manifest/)
 })

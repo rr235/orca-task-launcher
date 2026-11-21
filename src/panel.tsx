@@ -71,6 +71,15 @@ const storedTemplates = atom<JsonValue>(TEMPLATES_KEY, null, { persist: 'storage
 const starting = atom<Record<string, boolean>>({})
 const startErrors = atom<Record<string, string>>({})
 const startKey = (project: ProjectRef, issue: Issue): string => `${project.id}#${issue.number}`
+// This run's version from the worker, never persisted: an update must not show the old one.
+const pluginVersion = atom<string | null>(null)
+
+const BUG_FORM = 'https://github.com/rr235/orca-task-launcher/issues/new?template=bug_report.yml'
+
+/** The bug report form, with the plugin version filled in when it is known. */
+export function bugReportUrl(version: string | null): string {
+  return version ? `${BUG_FORM}&version=${encodeURIComponent(version)}` : BUG_FORM
+}
 
 let saveTimer: ReturnType<typeof setTimeout> | null = null
 let loadSeq = 0
@@ -225,6 +234,11 @@ export function setup(ctx: PanelContext): () => void {
     })
   )
   set(templates, readTemplates(read(storedTemplates)))
+  // Without an answer the link still opens the form, with the version left for the reporter.
+  void plugin.request('plugin.version', undefined, { timeoutMs: 15000 }).then(
+    (version) => set(pluginVersion, version),
+    () => {}
+  )
   // Opening shows the last project's cached list at once; the first load swaps it if the project differs.
   const last = read(lastProjectId)
   const cached = last ? read(cache)[last] : undefined
@@ -611,7 +625,27 @@ function FilterControls({ current, board, applied }: { current: ReadyIssueList; 
   )
 }
 
+// Shown in every state, a failed load included.
+function ReportBug() {
+  return (
+    <Row justify="end">
+      <Text size="sm">
+        <Link href={bugReportUrl(read(pluginVersion))}>Report a bug</Link>
+      </Text>
+    </Row>
+  )
+}
+
 export default function Panel() {
+  return (
+    <Stack gap="md">
+      <PanelBody />
+      <ReportBug />
+    </Stack>
+  )
+}
+
+function PanelBody() {
   const current = read(issueList)
   const problem = read(panelError)
   if (problem && !current) {
