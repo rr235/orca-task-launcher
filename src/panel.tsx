@@ -400,6 +400,8 @@ function pill(text: string) {
 // Icon sizes in pixels: an agent beside a session's name, and a detail icon beside its worktree or branch.
 const AGENT_ICON_PX = 14
 const DETAIL_ICON_PX = 12
+// The plugin's rocket beside the project name above the prompt template.
+const PROJECT_ICON_PX = 16
 // The slot a working session's dot sits in, kept on every row.
 const DOT_PX = 16
 
@@ -783,11 +785,17 @@ function PanelBody() {
         <Section
           title="Prompt template"
           icon="bot"
-          description="Initial prompt for the coding agent."
+          description="Set initial prompt at issue start per Orca project"
           open={open.template}
           onToggle={toggle('template')}
         >
           <Stack gap="md">
+            <Row gap="xs" align="center">
+              <Icon src="assets/icon.png" alt="" px={PROJECT_ICON_PX} />
+              <Text size="md" muted>
+                {project.name}
+              </Text>
+            </Row>
             <Textarea
               label={`${project.name} prompt template`}
               labelHidden
